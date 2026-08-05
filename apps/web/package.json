@@ -1,0 +1,23 @@
+{
+  "name": "@deepresearch/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "//build": "Builds the workspace dependency first. Vercel's Root Directory is apps/web, so nothing else guarantees packages/shared/dist exists at build time.",
+    "build": "pnpm --filter @deepresearch/shared build && next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@deepresearch/shared": "workspace:*",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1"
+  }
+}
