@@ -1,0 +1,20 @@
+{
+  "name": "@deepresearch/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --watch --experimental-strip-types src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@deepresearch/shared": "workspace:*",
+    "@google-cloud/firestore": "^7.11.0",
+    "@google-cloud/tasks": "^5.5.0",
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.13"
+  }
+}

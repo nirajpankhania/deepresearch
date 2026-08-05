@@ -1,0 +1,22 @@
+{
+  "name": "deepresearch",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter=@deepresearch/shared --filter=@deepresearch/api --filter=@deepresearch/worker build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:api": "pnpm --filter @deepresearch/api dev",
+    "dev:worker": "pnpm --filter @deepresearch/worker dev",
+    "dev:web": "pnpm --filter @deepresearch/web dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}

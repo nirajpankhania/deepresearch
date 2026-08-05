@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Secrets — nothing in this block may ever be committed.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Service account / credential material, under any of the names gcloud,
+# Terraform and the GitHub actions tooling tend to produce.
+*.json.key
+*-key.json
+*-keyfile.json
+service-account*.json
+*credentials*.json
+gha-creds-*.json
+application_default_credentials.json
+adc.json
+
+# ---------------------------------------------------------------------------
+# Terraform — state contains resource metadata and must stay out of the repo.
+# The provider lock file is intentionally NOT ignored; it should be committed.
+# ---------------------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---------------------------------------------------------------------------
+# Tooling artefacts specific to the authoring environment — not part of the
+# deliverable and deliberately excluded from the repo.
+# ---------------------------------------------------------------------------
+CLAUDE.md
+.claude/
+docs/superpowers/
+.cursor/
+.aider*
+.zed/
+
+# ---------------------------------------------------------------------------
+# Dependencies and build output
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Deploy / hosting
+# ---------------------------------------------------------------------------
+.vercel
+
+# ---------------------------------------------------------------------------
+# Test and tooling output
+# ---------------------------------------------------------------------------
+coverage/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.eslintcache
+
+# ---------------------------------------------------------------------------
+# OS / editor cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
