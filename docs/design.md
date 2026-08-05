@@ -179,13 +179,34 @@ synthesis pass, which doubles the failure surface and can introduce new
 ungrounded text. Showing the reader which claims are weak is more honest than
 silently rewriting them.
 
-### Source availability
+### Source availability and cost
 
-Valyu's source access is tiered, and this key is limited. arXiv, PubMed and web
-are the reliable core; patents, genomics and finance are best-effort with
-graceful degradation. `GET /v1/datasources` is called once during development and
-the result recorded, so an unavailable source is a documented design constraint
-rather than a runtime surprise.
+`GET /v1/datasources` was called once during development rather than discovering
+limits at runtime. It returns 48 datasources, and live searches succeeded against
+arXiv, PubMed, bioRxiv, clinical trials, patents and web — so source routing is
+not constrained the way tiered-access documentation suggested. Clinical questions
+can reach PubMed *and* clinical trials, and the preprint/published dedup case can
+be exercised for real against arXiv or bioRxiv versus PubMed.
+
+Cost varies about eightfold by source, which is what makes the budget gate
+load-bearing rather than decorative. Measured pricing is roughly `cpm/1000` per
+result: arXiv and PubMed at cpm 1.0, clinical trials at 5.0, patents at 8.0. At
+ten results across five sub-queries, an all-arXiv task costs around $0.05 while an
+all-patents task costs around $0.40 — over the $0.30 cap by itself. Hence the cap
+is checked *before* each dispatch rather than after the fact, and the planner is
+instructed not to route to expensive sources speculatively.
+
+### Model selection
+
+Flash tier (`gemini-3-flash-preview`) for planning, reranking and grounding; Pro
+tier (`gemini-2.5-pro`) for the single synthesis call.
+
+There is no Gemini 3 Pro available on this project — every `gemini-3-*-pro`
+identifier returns 404 — so synthesis uses the strongest model that is actually
+reachable. `gemini-2.5-pro` retires on 16 October 2026. That is accepted
+knowingly rather than overlooked: synthesis is the one call whose quality appears
+directly in the deliverable, and both identifiers are environment variables, so
+moving to Gemini 3 Pro when it lands is a redeploy rather than a code change.
 
 ---
 
