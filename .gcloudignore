@@ -1,0 +1,28 @@
+# Controls what is uploaded to Cloud Build by `gcloud run deploy --source`.
+# Explicit rather than inherited from .gitignore, so the upload stays small and
+# predictable. The Dockerfile only ever reads the workspace manifests and the
+# api/worker/shared sources.
+.git/
+node_modules/
+**/node_modules/
+**/dist/
+**/.next/
+**/coverage/
+
+infra/
+docs/
+apps/web/
+
+# NOT scripts/ — the Dockerfile copies scripts/docker-entrypoint.sh, and
+# excluding the directory here breaks the Cloud Build image while leaving local
+# `docker build` working, since .dockerignore does not exclude it.
+scripts/deploy.sh
+
+CLAUDE.md
+.claude/
+README.md
+
+.env
+.env.*
+!.env.example
+*.log

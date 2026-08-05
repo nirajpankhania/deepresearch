@@ -9,9 +9,73 @@ each claim against the sources it cites.
 Backend runs on Google Cloud (Cloud Run, Cloud Tasks, Firestore, Cloud Storage,
 Vertex AI). Frontend is a Next.js app on Vercel.
 
-> **Status: Phase 0 (scaffold).** The workspace, container, and infrastructure
-> definitions are in place and verified. The task lifecycle lands in Phase 1.
-> See [`docs/design.md`](docs/design.md) for the full design and rationale.
+> **Status: Phase 1 complete.** The full task lifecycle runs on real
+> infrastructure — submit, queue, claim, complete — with idempotent retry
+> handling verified end to end. The report itself is still a placeholder; the
+> retrieval pipeline lands in Phase 2. See [`docs/design.md`](docs/design.md)
+> for the design and rationale.
+
+**Deployed backend**
+
+| | |
+|---|---|
+| API | `https://deepresearch-api-i5hdokk27q-nw.a.run.app` |
+| Worker | `https://deepresearch-worker-i5hdokk27q-nw.a.run.app` (private — Cloud Tasks only) |
+
+## Example API usage
+
+The API requires an `X-API-Key` header. Retrieve the value with:
+
+```bash
+KEY=$(gcloud secrets versions access latest --secret=backend-api-key)
+API=https://deepresearch-api-i5hdokk27q-nw.a.run.app
+```
+
+Create a task — returns immediately with an id:
+
+```bash
+curl -X POST "$API/tasks" \
+  -H 'Content-Type: application/json' \
+  -H "X-API-Key: $KEY" \
+  -d '{
+        "question": "Does semaglutide preserve muscle mass in older adults?",
+        "dateRange": { "start": "2020-01-01" }
+      }'
+
+# 202  {"id":"5a6ce638-f9de-47cd-8140-f5e942b9b0a1","status":"queued"}
+```
+
+Retrieve it — status, progress, and the report once complete:
+
+```bash
+curl "$API/tasks/5a6ce638-f9de-47cd-8140-f5e942b9b0a1" -H "X-API-Key: $KEY"
+```
+
+```jsonc
+{
+  "id": "5a6ce638-...", "status": "running",
+  "progress": { "step": "retrieving", "message": "Searching sources", "pct": 50 },
+  "attempt": 1, "queries": [], "sources": [],
+  "cost": { "totalUsd": 0, "txIds": [] }
+}
+```
+
+Health check (no key required):
+
+```bash
+curl "$API/health"     # {"status":"ok","role":"api"}
+```
+
+## Tests
+
+```bash
+pnpm test              # unit tests
+scripts/smoke.sh       # end-to-end against the deployed stack
+```
+
+The smoke test covers auth rejection, request validation, the full lifecycle,
+and both layers of idempotency — that a duplicate enqueue is rejected by the
+queue, and that a redelivered message leaves a completed task untouched.
 
 ---
 

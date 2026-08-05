@@ -54,7 +54,11 @@ importers:
         specifier: ^4.6.13
         version: 4.13.0
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      '@google-cloud/firestore':
+        specifier: ^7.11.0
+        version: 7.11.6
 
 packages:
 
