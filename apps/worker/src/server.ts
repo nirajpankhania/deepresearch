@@ -81,6 +81,7 @@ app.post('/process', async (c) => {
       task,
       log: taskLog,
       onProgress: (progress) => tasks.reportProgress(taskId, progress, config.limits.leaseSeconds),
+      faultInjectionEnabled: config.faultInjectionEnabled,
     });
 
     const written = await tasks.complete(taskId, result);

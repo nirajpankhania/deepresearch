@@ -2,11 +2,23 @@ import type { CompletionResult } from '@deepresearch/shared/firestore';
 import type { Logger } from '@deepresearch/shared/logger';
 import type { Progress, Task } from '@deepresearch/shared';
 
+import { FORCE_FAILURE_SENTINEL } from '../config.js';
+
 export interface PipelineContext {
   task: Task;
   log: Logger;
   /** Report progress and extend the lease. */
   onProgress: (progress: Progress) => Promise<void>;
+  /** When true, the force-failure sentinel in a question is honoured. */
+  faultInjectionEnabled: boolean;
+}
+
+/** Thrown by fault injection. Ordinary pipeline failures throw normal errors. */
+export class InjectedFailure extends Error {
+  constructor(attempt: number) {
+    super(`Injected failure (attempt ${attempt})`);
+    this.name = 'InjectedFailure';
+  }
 }
 
 /**
@@ -20,7 +32,12 @@ export interface PipelineContext {
  * Phases 2-5 replace the body with the real stages. The signature does not change.
  */
 export async function runPipeline(ctx: PipelineContext): Promise<CompletionResult> {
-  const { task, onProgress } = ctx;
+  const { task, onProgress, faultInjectionEnabled } = ctx;
+
+  if (faultInjectionEnabled && task.question.includes(FORCE_FAILURE_SENTINEL)) {
+    ctx.log.warn('fault injection triggered', { attempt: task.attempt });
+    throw new InjectedFailure(task.attempt);
+  }
 
   await onProgress({ step: 'planning', message: 'Planning sub-queries', pct: 20 });
   await onProgress({ step: 'retrieving', message: 'Searching sources', pct: 50 });

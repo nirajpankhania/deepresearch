@@ -105,5 +105,37 @@ check "redelivery leaves the task unchanged" \
   "$(if [[ "$BEFORE" == "$AFTER" ]]; then echo same; else echo mutated; fi)" "same"
 
 echo
+echo "Failure path"
+# Requires FAULT_INJECTION_ENABLED=true on the worker. Skipped rather than
+# failed when it is off, so this script still works against a hardened deploy.
+FAIL_RESP="$("${CURL[@]}" -X POST -H 'Content-Type: application/json' -H "X-API-Key: $KEY" \
+  -d '{"question":"__FORCE_FAILURE__ smoke test of the failure path"}' "$API/tasks")"
+FAIL_ID="$(printf '%s' "$FAIL_RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')"
+
+FSTATUS=""
+for _ in $(seq 1 40); do
+  FSTATUS="$("${CURL[@]}" -H "X-API-Key: $KEY" "$API/tasks/$FAIL_ID" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin)["status"])')"
+  [[ "$FSTATUS" == "completed" || "$FSTATUS" == "failed" ]] && break
+  sleep 5
+done
+
+if [[ "$FSTATUS" == "completed" ]]; then
+  echo "  SKIP  failure path (fault injection disabled on this deploy)"
+else
+  check "forced failure reaches failed" "$FSTATUS" "failed"
+
+  FDOC="$("${CURL[@]}" -H "X-API-Key: $KEY" "$API/tasks/$FAIL_ID")"
+  check "failed task exhausted its attempts" \
+    "$(printf '%s' "$FDOC" | python3 -c 'import sys,json;print(json.load(sys.stdin)["attempt"])')" "3"
+  check "failed task has a human-readable error" \
+    "$(printf '%s' "$FDOC" | python3 -c 'import sys,json;e=json.load(sys.stdin).get("error") or {};print("yes" if len(e.get("message","")) > 30 else "no")')" "yes"
+  check "failed task holds no lease" \
+    "$(printf '%s' "$FDOC" | python3 -c 'import sys,json;print("none" if json.load(sys.stdin)["leaseExpiresAt"] is None else "held")')" "none"
+  check "failed task has no report" \
+    "$(printf '%s' "$FDOC" | python3 -c 'import sys,json;print("absent" if not (json.load(sys.stdin).get("report") or "") else "present")')" "absent"
+fi
+
+echo
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

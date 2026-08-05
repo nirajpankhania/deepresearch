@@ -25,6 +25,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # application code that could fail to enforce it.
 WORKER_TIMEOUT=900
 
+# Lets a question containing __FORCE_FAILURE__ fail on purpose. Enabled because
+# the failure path is otherwise only reachable during a real outage, and both
+# the smoke test and the frontend's failed-state UI need something that fails
+# reliably. Gated behind the API key like every other endpoint.
+FAULT_INJECTION="${FAULT_INJECTION_ENABLED:-true}"
+
 cd "$REPO_ROOT"
 
 tf_output() {
@@ -55,7 +61,7 @@ deploy_worker() {
     --memory 1Gi \
     --max-instances 5 \
     --timeout "${WORKER_TIMEOUT}s" \
-    --set-env-vars "ROLE=worker,GCP_PROJECT_ID=$PROJECT,GCP_REGION=$REGION,GCS_TRACE_BUCKET=$TRACE_BUCKET,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_PRO_MODEL=gemini-2.5-pro,LEASE_SECONDS=$WORKER_TIMEOUT" \
+    --set-env-vars "ROLE=worker,GCP_PROJECT_ID=$PROJECT,GCP_REGION=$REGION,GCS_TRACE_BUCKET=$TRACE_BUCKET,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_PRO_MODEL=gemini-2.5-pro,LEASE_SECONDS=$WORKER_TIMEOUT,FAULT_INJECTION_ENABLED=$FAULT_INJECTION" \
     --set-secrets "VALYU_API_KEY=valyu-api-key:latest" \
     --quiet
 
