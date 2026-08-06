@@ -37,7 +37,8 @@ Vertex AI). Frontend is a Next.js app on Vercel.
 The API requires an `X-API-Key` header. Retrieve the value with:
 
 ```bash
-KEY=$(gcloud secrets versions access latest --secret=backend-api-key)
+KEY=$(gcloud secrets versions access latest --secret=backend-api-key \
+        --project=deepresearch-504612)
 API=https://deepresearch-api-i5hdokk27q-nw.a.run.app
 ```
 
@@ -61,13 +62,59 @@ Retrieve it — status, progress, and the report once complete:
 curl "$API/tasks/5a6ce638-f9de-47cd-8140-f5e942b9b0a1" -H "X-API-Key: $KEY"
 ```
 
+While running — `queries` and `sources` are written on completion, in the same
+transaction as the report, so a task never reads as complete but reportless:
+
 ```jsonc
 {
-  "id": "5a6ce638-...", "status": "running",
-  "progress": { "step": "retrieving", "message": "Searching sources", "pct": 50 },
-  "attempt": 1, "queries": [], "sources": [],
+  "id": "5a6ce638-...", "status": "running", "attempt": 1,
+  "progress": { "step": "retrieving", "message": "Searching 4 sub-queries", "pct": 30 },
+  "queries": [], "sources": [],
   "cost": { "totalUsd": 0, "txIds": [] }
 }
+```
+
+Progress runs `planning` 10 → `retrieving` 30 → `deduplicating` 55 →
+`reranking` 70 → `synthesising` 85 → `grounding` 95 → `done` 100.
+
+Once complete (abridged):
+
+```jsonc
+{
+  "id": "5a6ce638-...", "status": "completed",
+  "report": "Based on the provided sources, ... [1, 7]\n\n## Sources\n\n1. [...](...)",
+  "queries": [
+    { "query": "semaglutide body composition lean mass older adults",
+      "includedSources": ["valyu/valyu-pubmed", "valyu/valyu-clinical-trials"],
+      "rationale": "Trial outcomes are the primary evidence.",
+      "resultCount": 10 }
+  ],
+  "sources": [
+    { "id": "doi:10.1111/dom.70141", "title": "Impact of Semaglutide on fat mass...",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/PMC12673431",
+      "dataset": "valyu/valyu-pubmed", "publicationDate": "2025-10-09",
+      "authors": ["Mathieu Alissou", "Thomas Demangeat"],
+      "doi": "10.1111/dom.70141", "pmcId": "PMC12673431",
+      "relevanceScore": 0.92, "rerankScore": 1,
+      "mergedAlternates": [{ "url": "...", "mergedBy": "doi" }] }
+  ],
+  // Measured from the search responses, never estimated. txIds are the audit trail.
+  "cost": { "totalUsd": 0.03, "txIds": ["tx_3ecf41d4-...", "tx_444707b1-..."] },
+  "grounding": {
+    "mode": "per-claim", "supportedCount": 15, "totalCount": 20,
+    "claims": [
+      { "sentence": "...", "citedSourceIds": ["doi:10.1111/dom.70141"],
+        "verdict": "supported" }
+    ]
+  }
+}
+```
+
+A failed task carries `error` instead of `report`:
+
+```jsonc
+{ "status": "failed", "attempt": 3,
+  "error": { "message": "Research failed after multiple attempts...", "stage": "planning" } }
 ```
 
 Health check (no key required):
@@ -152,7 +199,7 @@ ALLOWED_ORIGINS=https://<project>.vercel.app scripts/deploy.sh api
 ### Domain features
 
 Three, chosen because they make the retrieval legible rather than because they
-look impressive — see "Who this is for" above.
+look impressive — see [Who this is for](#who-this-is-for) below.
 
 1. **Source cards** carrying dataset, publication date, authors, resolvable
    identifier (DOI, arXiv, PMID, PMC, NCT), relevance score, and any merged
@@ -179,14 +226,22 @@ about the ones that did not verify. See
 ## Tests
 
 ```bash
-pnpm test              # 200 unit tests
+pnpm test              # 200 unit tests — worker 172, api 17, web 11
 scripts/smoke.sh       # 25 checks end-to-end against the deployed stack
 ```
 
-Unit tests cover the logic where bugs are silent and correctness is checkable:
-identifier normalisation and the two-pass deduplication, the budget gate under
-concurrency, retry classification, plan and rerank response parsing, citation
-handling, and sentence splitting.
+Unit tests cover the logic where bugs are silent and correctness is checkable —
+which is also the logic the brief grades:
+
+| Area | What is tested |
+|---|---|
+| Identifiers | DOI/arXiv/PMID/PMC/NCT extraction and normalisation across the differing shapes Valyu returns |
+| Deduplication | Identifier precedence, the title-and-author pass that catches preprint/published pairs, and chunk rejoining |
+| Budget | The gate refusing before dispatch, and reservations holding under concurrency |
+| Resilience | Retrying 5xx and 429, never other 4xx; timeout and backoff |
+| Plan / rerank | Malformed responses, hallucinated dataset slugs, banned query operators |
+| Citations | Stripping citations outside the corpus; linking them to source cards |
+| Grounding | Sentence splitting across `2.4 mg`, `et al.`, `e.g.`, `Fig. 3`; unjudged claims defaulting to unsupported |
 
 The smoke test runs against the deployed system and covers auth rejection,
 request validation, the full lifecycle, retrieval quality (metadata preserved,
@@ -202,12 +257,19 @@ untouched — and the failure path via forced failure.
 ```
 apps/api/        Cloud Run — HTTP handlers, task creation and retrieval
 apps/worker/     Cloud Run — the research pipeline
-apps/web/        Next.js — deployed to Vercel                      (Phase 4)
-packages/shared/ Types and the queue interface, defined once
+  clients/         Valyu, Vertex AI — the only code that touches the network
+  pipeline/        plan · retrieve · budget · dedup · rerank · synthesise · ground
+apps/web/        Next.js — the interface, deployed to Vercel
+packages/shared/ Types, the queue interface and the task repository, defined once
 infra/           Terraform — queue, bucket, service accounts, IAM, secrets
-scripts/         Deploy and smoke-test scripts
+scripts/         deploy.sh, smoke.sh, docker-entrypoint.sh
+docs/            Design, cost, scaling, claim grounding, example output
 Dockerfile       One image, ROLE=api|worker
 ```
+
+Every file under `pipeline/` is data-in, data-out; only `clients/` performs I/O.
+That boundary is what makes the logic the brief grades — deduplication, the
+budget gate, plan validation — testable without mocking a single SDK.
 
 ## Requirements
 
@@ -224,39 +286,36 @@ cp .env.example .env      # then fill in the blanks
 pnpm build
 ```
 
-`.env.example` documents every variable and which service reads it. The two
-secrets are `VALYU_API_KEY` and `BACKEND_API_KEY`; generate the latter with
-`openssl rand -hex 32`.
+`.env.example` documents every variable the services read and which service reads
+each. The two secrets are `VALYU_API_KEY` and `BACKEND_API_KEY`; generate the
+latter with `openssl rand -hex 32`.
 
-Run the services locally, in two terminals:
+The web app reads its own file, `apps/web/.env.local` — the backend URL and key
+are server-side variables there, deliberately not `NEXT_PUBLIC_`:
+
+```bash
+cat > apps/web/.env.local <<'ENV'
+BACKEND_API_URL=https://deepresearch-api-i5hdokk27q-nw.a.run.app
+BACKEND_API_KEY=<from Secret Manager>
+ENV
+```
+
+Run the three services, in separate terminals:
 
 ```bash
 pnpm dev:api      # :8080
 pnpm dev:worker   # :8081
+pnpm dev:web      # :3000
 ```
 
 With `DISPATCHER=local`, the API posts straight to the worker and skips Cloud
-Tasks. Firestore is the real thing in both local and deployed environments, so
-the claim transaction and lease behaviour never diverge.
+Tasks — the one component with no faithful local emulator, kept behind a
+one-method interface for exactly that reason. Firestore is the real thing in both
+local and deployed environments, so the claim transaction and lease behaviour
+never diverge.
 
-## Infrastructure
-
-```bash
-terraform -chdir=infra init
-terraform -chdir=infra apply
-```
-
-Terraform manages the Cloud Tasks queue, the traces bucket, three service
-accounts, their IAM bindings, and the `backend-api-key` secret *container*. It
-never manages a secret value — those are added out of band:
-
-```bash
-printf '%s' "$(openssl rand -hex 32)" | \
-  gcloud secrets versions add backend-api-key --data-file=-
-```
-
-Cloud Run is deployed by script rather than Terraform, so that Terraform never
-needs to know an image digest.
+Requires Application Default Credentials (`gcloud auth application-default
+login`) for Firestore and Vertex AI.
 
 ## Container
 
@@ -273,11 +332,25 @@ in Terraform so that Terraform never needs to know an image digest — otherwise
 every code change becomes a state change.
 
 ```bash
+terraform -chdir=infra init
 terraform -chdir=infra apply        # queue, bucket, service accounts, IAM, secrets
 
 scripts/deploy.sh worker            # worker first — the API needs its URL
 scripts/deploy.sh api
 scripts/deploy.sh all               # or both, in order
+```
+
+Terraform manages the Cloud Tasks queue, the traces bucket, three service
+accounts, their IAM bindings, and the `backend-api-key` secret *container*. It
+never manages a secret **value** — that would put the value in local state — so
+both are added out of band:
+
+```bash
+printf '%s' "$(openssl rand -hex 32)" | \
+  gcloud secrets versions add backend-api-key --data-file=-
+
+printf '%s' "$VALYU_KEY" | \
+  gcloud secrets versions add valyu-api-key --data-file=-
 ```
 
 `deploy.sh` builds the image with Cloud Build from source, deploys both
