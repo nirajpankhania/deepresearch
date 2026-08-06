@@ -10,6 +10,7 @@ import { dedupeSources } from './dedup.js';
 import { planQueries } from './plan.js';
 import { rerankSources } from './rerank.js';
 import { runRetrieval } from './retrieve.js';
+import { synthesiseReport } from './synthesise.js';
 
 export interface PipelineContext {
   task: Task;
@@ -39,10 +40,9 @@ export class InjectedFailure extends Error {
 /**
  * The research pipeline.
  *
- * Stages 1-4 are implemented: plan, retrieve under a spend cap, deduplicate, and
- * rerank against the original question. Stage 5 (synthesis) and stage 6 (claim
- * grounding) follow in later phases; until then the report is an interim
- * listing of what retrieval selected, so the stage is verifiable on its own.
+ * Stages 1-5: plan, retrieve under a spend cap, deduplicate, rerank against the
+ * original question, and synthesise a cited report. Stage 6 (claim grounding)
+ * follows in the next phase.
  */
 export async function runPipeline(ctx: PipelineContext): Promise<CompletionResult> {
   const { task, log, onProgress, faultInjectionEnabled, valyu, gemini, limits } = ctx;
@@ -100,64 +100,32 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     log,
   });
 
-  await onProgress({ step: 'synthesising', message: 'Preparing report', pct: 90 });
+  // --- Stage 5: synthesise --------------------------------------------------
+  await onProgress({
+    step: 'synthesising',
+    message: `Writing report from ${selected.length} sources`,
+    pct: 85,
+  });
+  const synthesis = await synthesiseReport({
+    gemini,
+    question: task.question,
+    sources: selected,
+    log,
+    ...(task.dateRange ? { dateRange: task.dateRange } : {}),
+  });
+
+  log.info('pipeline complete', {
+    sources: selected.length,
+    citedSources: synthesis.citedSourceCount,
+    uncitedSources: synthesis.uncitedSourceCount,
+    modelCalls: gemini.callCount,
+    costUsd: budget.record().totalUsd,
+  });
 
   return {
-    report: buildInterimReport(task.question, queries, selected, mergedCount),
+    report: synthesis.report,
     queries,
     sources: selected,
     cost: budget.record(),
   };
-}
-
-/**
- * Interim output for Phase 2, replaced by real synthesis in Phase 3.
- *
- * Written as proper Markdown with working citation links so the rendering path
- * and the frontend can be built against something representative.
- */
-function buildInterimReport(
-  question: string,
-  queries: { query: string; includedSources: string[]; resultCount: number; error?: string }[],
-  sources: Source[],
-  mergedCount: number,
-): string {
-  const lines: string[] = [
-    `# Retrieval results`,
-    ``,
-    `**Question:** ${question}`,
-    ``,
-    `> Synthesis is not yet implemented. This is the source corpus that retrieval`,
-    `> selected — ${sources.length} sources after merging ${mergedCount} duplicate${mergedCount === 1 ? '' : 's'}.`,
-    ``,
-    `## Searches run`,
-    ``,
-  ];
-
-  for (const q of queries) {
-    lines.push(
-      `- **${q.query}** — ${q.includedSources.join(', ')} · ${q.resultCount} result${q.resultCount === 1 ? '' : 's'}${q.error ? ` · _${q.error}_` : ''}`,
-    );
-  }
-
-  lines.push('', '## Sources', '');
-
-  sources.forEach((s, i) => {
-    const meta = [
-      s.publicationDate,
-      s.authors?.slice(0, 3).join(', '),
-      s.dataset,
-      s.rerankScore !== undefined ? `relevance ${s.rerankScore.toFixed(2)}` : undefined,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-
-    lines.push(`${i + 1}. [${s.title}](${s.url})`);
-    if (meta) lines.push(`   ${meta}`);
-    if (s.mergedAlternates?.length) {
-      lines.push(`   _also found as: ${s.mergedAlternates.map((a) => a.url).join(', ')}_`);
-    }
-  });
-
-  return lines.join('\n');
 }
