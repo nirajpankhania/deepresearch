@@ -89,10 +89,15 @@ export interface Source {
   publicationDate?: string;
   authors?: string[];
 
-  /** Stable identifiers, in the precedence order used for deduplication. */
+  /**
+   * Stable identifiers, in the precedence order used for deduplication.
+   * PMID and PMC are separate identifier spaces and are kept apart deliberately:
+   * the same article has different numbers in each.
+   */
   doi?: string;
   arxivId?: string;
   pmid?: string;
+  pmcId?: string;
   nctId?: string;
 
   /** Valyu's relevance score for the sub-query that surfaced this result. */
@@ -120,7 +125,7 @@ export interface MergedAlternate {
   doi?: string;
   publicationDate?: string;
   /** Which dedup rule merged this record. */
-  mergedBy: 'doi' | 'arxivId' | 'pmid' | 'nctId' | 'url' | 'title-author';
+  mergedBy: 'doi' | 'arxivId' | 'pmid' | 'pmcId' | 'nctId' | 'url' | 'title-author';
 }
 
 /**

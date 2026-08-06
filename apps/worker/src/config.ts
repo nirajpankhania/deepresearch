@@ -48,6 +48,14 @@ export interface WorkerConfig {
     /** Lease duration held by a claiming worker, in seconds. */
     leaseSeconds: number;
   };
+  retrieval: {
+    /** Results requested per sub-query. Valyu permits 1-20. */
+    maxResultsPerQuery: number;
+    /** Valyu's own relevance floor, applied per sub-query before we see results. */
+    relevanceThreshold: number;
+    /** Cap on the corpus handed to synthesis, after dedup and rerank. */
+    maxSources: number;
+  };
 }
 
 export function loadConfig(): WorkerConfig {
@@ -64,6 +72,11 @@ export function loadConfig(): WorkerConfig {
       maxTaskCostUsd: Number(optional('MAX_TASK_COST_USD', '0.30')),
       maxModelCalls: Number(optional('MAX_MODEL_CALLS', '12')),
       leaseSeconds: Number(optional('LEASE_SECONDS', '900')),
+    },
+    retrieval: {
+      maxResultsPerQuery: Number(optional('MAX_RESULTS_PER_QUERY', '10')),
+      relevanceThreshold: Number(optional('RELEVANCE_THRESHOLD', '0.5')),
+      maxSources: Number(optional('MAX_SOURCES', '20')),
     },
   };
 }

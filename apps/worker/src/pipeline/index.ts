@@ -1,8 +1,15 @@
 import type { CompletionResult } from '@deepresearch/shared/firestore';
 import type { Logger } from '@deepresearch/shared/logger';
-import type { Progress, Task } from '@deepresearch/shared';
+import type { Progress, Source, Task } from '@deepresearch/shared';
 
 import { FORCE_FAILURE_SENTINEL } from '../config.js';
+import type { GeminiClient } from '../clients/gemini.js';
+import type { ValyuClient } from '../clients/valyu.js';
+import { BudgetLedger } from './budget.js';
+import { dedupeSources } from './dedup.js';
+import { planQueries } from './plan.js';
+import { rerankSources } from './rerank.js';
+import { runRetrieval } from './retrieve.js';
 
 export interface PipelineContext {
   task: Task;
@@ -11,6 +18,14 @@ export interface PipelineContext {
   onProgress: (progress: Progress) => Promise<void>;
   /** When true, the force-failure sentinel in a question is honoured. */
   faultInjectionEnabled: boolean;
+  valyu: ValyuClient;
+  gemini: GeminiClient;
+  limits: {
+    maxTaskCostUsd: number;
+    maxResultsPerQuery: number;
+    relevanceThreshold: number;
+    maxSources: number;
+  };
 }
 
 /** Thrown by fault injection. Ordinary pipeline failures throw normal errors. */
@@ -22,42 +37,127 @@ export class InjectedFailure extends Error {
 }
 
 /**
- * PHASE 1 PLACEHOLDER.
+ * The research pipeline.
  *
- * Returns a hardcoded report so the full lifecycle — enqueue, claim, lease,
- * transactional completion, retry, idempotent redelivery — can be proven on real
- * infrastructure before any model or retrieval call exists. When something
- * breaks in Phase 2, the infrastructure is already ruled out.
- *
- * Phases 2-5 replace the body with the real stages. The signature does not change.
+ * Stages 1-4 are implemented: plan, retrieve under a spend cap, deduplicate, and
+ * rerank against the original question. Stage 5 (synthesis) and stage 6 (claim
+ * grounding) follow in later phases; until then the report is an interim
+ * listing of what retrieval selected, so the stage is verifiable on its own.
  */
 export async function runPipeline(ctx: PipelineContext): Promise<CompletionResult> {
-  const { task, onProgress, faultInjectionEnabled } = ctx;
+  const { task, log, onProgress, faultInjectionEnabled, valyu, gemini, limits } = ctx;
 
   if (faultInjectionEnabled && task.question.includes(FORCE_FAILURE_SENTINEL)) {
-    ctx.log.warn('fault injection triggered', { attempt: task.attempt });
+    log.warn('fault injection triggered', { attempt: task.attempt });
     throw new InjectedFailure(task.attempt);
   }
 
-  await onProgress({ step: 'planning', message: 'Planning sub-queries', pct: 20 });
-  await onProgress({ step: 'retrieving', message: 'Searching sources', pct: 50 });
-  await onProgress({ step: 'synthesising', message: 'Writing report', pct: 80 });
+  const budget = new BudgetLedger(limits.maxTaskCostUsd);
+
+  // --- Stage 1: plan --------------------------------------------------------
+  await onProgress({ step: 'planning', message: 'Planning sub-queries', pct: 10 });
+  const planned = await planQueries(gemini, task.question, task.dateRange);
+  log.info('plan complete', {
+    queryCount: planned.length,
+    sources: planned.map((q) => q.includedSources),
+  });
+
+  // --- Stage 2 and 3: retrieve, under the budget gate -----------------------
+  await onProgress({
+    step: 'retrieving',
+    message: `Searching ${planned.length} sub-queries`,
+    pct: 30,
+  });
+  const { queries, sources: raw } = await runRetrieval({
+    valyu,
+    queries: planned,
+    budget,
+    maxResults: limits.maxResultsPerQuery,
+    relevanceThreshold: limits.relevanceThreshold,
+    log,
+    ...(task.dateRange ? { dateRange: task.dateRange } : {}),
+  });
+
+  if (raw.length === 0) {
+    // Every sub-query failed or was skipped. A report from no sources would be
+    // parametric knowledge dressed up as research, which is the failure mode the
+    // whole design exists to avoid.
+    throw new Error('no sources were retrieved for this question');
+  }
+
+  // --- Stage 4: deduplicate, then rerank against the original question ------
+  await onProgress({ step: 'deduplicating', message: 'Merging duplicate sources', pct: 55 });
+  const deduped = dedupeSources(raw);
+  const mergedCount = raw.length - deduped.length;
+  log.info('dedup complete', { before: raw.length, after: deduped.length, merged: mergedCount });
+
+  await onProgress({ step: 'reranking', message: 'Ranking sources by relevance', pct: 70 });
+  const selected = await rerankSources({
+    gemini,
+    question: task.question,
+    sources: deduped,
+    limit: limits.maxSources,
+    log,
+  });
+
+  await onProgress({ step: 'synthesising', message: 'Preparing report', pct: 90 });
 
   return {
-    report: [
-      `# Placeholder report`,
-      ``,
-      `**Question:** ${task.question}`,
-      ``,
-      `This is a hardcoded Phase 1 report. It exists to prove the task lifecycle`,
-      `end to end on real infrastructure — Cloud Tasks dispatch, the Firestore`,
-      `claim transaction, lease handling, and idempotent redelivery — before any`,
-      `retrieval or model call is introduced.`,
-      ``,
-      `The retrieval pipeline replaces this in Phase 2.`,
-    ].join('\n'),
-    queries: [],
-    sources: [],
-    cost: { totalUsd: 0, txIds: [] },
+    report: buildInterimReport(task.question, queries, selected, mergedCount),
+    queries,
+    sources: selected,
+    cost: budget.record(),
   };
+}
+
+/**
+ * Interim output for Phase 2, replaced by real synthesis in Phase 3.
+ *
+ * Written as proper Markdown with working citation links so the rendering path
+ * and the frontend can be built against something representative.
+ */
+function buildInterimReport(
+  question: string,
+  queries: { query: string; includedSources: string[]; resultCount: number; error?: string }[],
+  sources: Source[],
+  mergedCount: number,
+): string {
+  const lines: string[] = [
+    `# Retrieval results`,
+    ``,
+    `**Question:** ${question}`,
+    ``,
+    `> Synthesis is not yet implemented. This is the source corpus that retrieval`,
+    `> selected — ${sources.length} sources after merging ${mergedCount} duplicate${mergedCount === 1 ? '' : 's'}.`,
+    ``,
+    `## Searches run`,
+    ``,
+  ];
+
+  for (const q of queries) {
+    lines.push(
+      `- **${q.query}** — ${q.includedSources.join(', ')} · ${q.resultCount} result${q.resultCount === 1 ? '' : 's'}${q.error ? ` · _${q.error}_` : ''}`,
+    );
+  }
+
+  lines.push('', '## Sources', '');
+
+  sources.forEach((s, i) => {
+    const meta = [
+      s.publicationDate,
+      s.authors?.slice(0, 3).join(', '),
+      s.dataset,
+      s.rerankScore !== undefined ? `relevance ${s.rerankScore.toFixed(2)}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    lines.push(`${i + 1}. [${s.title}](${s.url})`);
+    if (meta) lines.push(`   ${meta}`);
+    if (s.mergedAlternates?.length) {
+      lines.push(`   _also found as: ${s.mergedAlternates.map((a) => a.url).join(', ')}_`);
+    }
+  });
+
+  return lines.join('\n');
 }

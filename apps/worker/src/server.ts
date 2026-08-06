@@ -3,12 +3,16 @@ import { Hono } from 'hono';
 import { TaskRepository } from '@deepresearch/shared/firestore';
 import { createLogger } from '@deepresearch/shared/logger';
 
+import { GeminiClient } from './clients/gemini.js';
+import { ValyuClient } from './clients/valyu.js';
 import { loadConfig } from './config.js';
 import { runPipeline } from './pipeline/index.js';
 
 const log = createLogger({ service: 'worker' });
 const config = loadConfig();
 const tasks = TaskRepository.forProject(config.projectId);
+
+const valyu = new ValyuClient(config.valyuApiKey, log);
 
 /**
  * Attempts beyond this are not retried. Must match the queue's maxAttempts:
@@ -82,6 +86,21 @@ app.post('/process', async (c) => {
       log: taskLog,
       onProgress: (progress) => tasks.reportProgress(taskId, progress, config.limits.leaseSeconds),
       faultInjectionEnabled: config.faultInjectionEnabled,
+      valyu,
+      // Constructed per task, because the call counter is a per-task step limit.
+      gemini: new GeminiClient({
+        projectId: config.projectId,
+        flashModel: config.flashModel,
+        proModel: config.proModel,
+        maxCalls: config.limits.maxModelCalls,
+        log: taskLog,
+      }),
+      limits: {
+        maxTaskCostUsd: config.limits.maxTaskCostUsd,
+        maxResultsPerQuery: config.retrieval.maxResultsPerQuery,
+        relevanceThreshold: config.retrieval.relevanceThreshold,
+        maxSources: config.retrieval.maxSources,
+      },
     });
 
     const written = await tasks.complete(taskId, result);
