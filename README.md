@@ -9,11 +9,13 @@ each claim against the sources it cites.
 Backend runs on Google Cloud (Cloud Run, Cloud Tasks, Firestore, Cloud Storage,
 Vertex AI). Frontend is a Next.js app on Vercel.
 
-> **Status: Phase 1 complete.** The full task lifecycle runs on real
-> infrastructure — submit, queue, claim, complete — with idempotent retry
-> handling verified end to end. The report itself is still a placeholder; the
-> retrieval pipeline lands in Phase 2. See [`docs/design.md`](docs/design.md)
-> for the design and rationale.
+> **Status: backend complete, frontend built and pending deployment.** The full
+> pipeline runs on real infrastructure — plan, retrieve under a spend cap,
+> deduplicate, rerank, synthesise a cited report. The web app is built and
+> verified against the deployed backend; the Vercel project is not yet created.
+> Claim grounding is next. See [`docs/design.md`](docs/design.md) for the design
+> and rationale, and [`docs/example-output.md`](docs/example-output.md) for a
+> complete run.
 
 **Deployed backend**
 
@@ -65,6 +67,99 @@ Health check (no key required):
 ```bash
 curl "$API/health"     # {"status":"ok","role":"api"}
 ```
+
+## Frontend
+
+Next.js App Router on Vercel, root directory `apps/web`.
+
+### How the browser reaches the backend
+
+It doesn't, directly. The browser calls this app's own route handlers
+(`/api/tasks`, `/api/tasks/[task_id]`), which call Cloud Run server-side with
+the `X-API-Key` header.
+
+Two reasons. The shared key stays on the server — a browser calling Cloud Run
+directly would need the key in the client bundle, which the brief forbids and
+which no amount of obfuscation fixes. And the backend's CORS allowlist then only
+has to admit the Vercel deployment rather than every visitor's origin.
+
+`lib/backend.ts` imports `server-only`, so the build fails if that module is ever
+reached from a client component instead of leaking the credential at runtime.
+Verified on a production build: the key appears in **zero** served HTML documents
+and **zero** client chunks.
+
+### How the backend authenticates callers
+
+`BACKEND_API_KEY` in an `X-API-Key` header, compared with a timing-safe
+comparison. CORS is restricted to `ALLOWED_ORIGINS`, set at deploy time.
+
+The endpoint is not left open because it is backed by paid search and model
+calls: an open endpoint is a cost-exposure problem even though the research
+results themselves are not confidential.
+
+### Polling, not streaming
+
+The client polls every 2s while a task is running, widens to 5s after the first
+minute, and stops on a terminal state.
+
+A task runs for a minute or two, so an open connection buys little. SSE would
+have to survive a Vercel function timeout, and a dropped connection needs
+reconnection logic anyway — at which point the complexity exceeds a `setTimeout`.
+Polling degrades gracefully: a failed poll retries on the next tick, and the UI
+only surfaces an error after two consecutive failures, so a single dropped
+request is invisible. The interval widens because a task still running after a
+minute is usually in synthesis, which produces no intermediate progress worth
+the extra requests.
+
+### Configuring the backend URL
+
+Two server-side environment variables, set in the Vercel dashboard **separately
+for Preview and Production** so a preview deployment can be pointed at a
+different backend without a code change:
+
+| Variable | Value |
+|---|---|
+| `BACKEND_API_URL` | the Cloud Run API URL |
+| `BACKEND_API_KEY` | from Secret Manager (`gcloud secrets versions access latest --secret=backend-api-key`) |
+
+Neither is `NEXT_PUBLIC_`, which is what keeps them server-side. Locally they go
+in `apps/web/.env.local`, which is gitignored.
+
+### Deploying to Vercel
+
+Import the repository at vercel.com/new with:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `apps/web` |
+| Build Command | `pnpm build` (ours builds `packages/shared` first) |
+| Include files outside root | enabled — required for the workspace dependency |
+
+Then redeploy the API with the Vercel domain so CORS admits it:
+
+```bash
+ALLOWED_ORIGINS=https://<project>.vercel.app scripts/deploy.sh api
+```
+
+### Domain features
+
+Three, chosen because they make the retrieval legible rather than because they
+look impressive — see "Who this is for" above.
+
+1. **Source cards** carrying dataset, publication date, authors, resolvable
+   identifier (DOI, arXiv, PMID, PMC, NCT), relevance score, and any merged
+   preprint/published alternate. This is what preserving Valyu's structured
+   metadata is *for*.
+2. **A "what was searched" panel** showing each generated sub-query, which
+   corpora it targeted, its result count and rationale, plus the measured cost
+   and how many results were merged as duplicates. Failed sub-queries are shown
+   as failed, because a report built from three of four facets is a different
+   object from one built from all four.
+3. **A date-range control** wired to the search API's own bounds, so the budget
+   is spent inside the window rather than on results that are then discarded.
+
+Citations in the report are links to the matching source card, so checking a
+claim is one click rather than a scroll and a search.
 
 ## Tests
 

@@ -1,82 +1,173 @@
-import { isTerminal, type TaskStatus } from '@deepresearch/shared';
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+
+import { Report } from '@/components/report';
+import { SearchPanel } from '@/components/search-panel';
+import { SubmitForm } from '@/components/submit-form';
+import { Progress, StatusBadge } from '@/components/status';
+import { useTask } from '@/hooks/use-task';
 
 /**
- * Phase 0 shell for the frontend.
- *
- * Deployed ahead of the real UI to prove one specific thing: that Vercel, with
- * Root Directory set to `apps/web`, resolves and builds the `@deepresearch/shared`
- * workspace dependency. `isTerminal` below is a runtime import rather than a
- * type — a type-only import would be erased at compile time and would prove
- * nothing about module resolution.
- *
- * The submission form, polling and report rendering land in Phase 4.
+ * Submitted tasks are remembered in localStorage so a refresh does not lose
+ * them. There is no user account, so the browser is the only place this can
+ * live; task state itself is durable server-side, and this is just the index.
  */
+const STORAGE_KEY = 'deepresearch.tasks.v1';
 
-const STAGES: { status: TaskStatus; label: string }[] = [
-  { status: 'queued', label: 'Queued' },
-  { status: 'running', label: 'Researching' },
-  { status: 'completed', label: 'Report ready' },
-  { status: 'failed', label: 'Failed' },
-];
+interface Submitted {
+  id: string;
+  question: string;
+  at: string;
+}
+
+function load(): Submitted[] {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? (parsed as Submitted[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function Home() {
+  const [tasks, setTasks] = useState<Submitted[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const stored = load();
+    setTasks(stored);
+    setSelected(stored[0]?.id ?? null);
+    setHydrated(true);
+  }, []);
+
+  const { task, loadError, isPolling } = useTask(selected);
+
+  const onCreated = useCallback((id: string, question: string) => {
+    setTasks((previous) => {
+      const next = [{ id, question, at: new Date().toISOString() }, ...previous].slice(0, 20);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // A full or disabled localStorage must not break submission.
+      }
+      return next;
+    });
+    setSelected(id);
+  }, []);
+
   return (
-    <main
-      style={{
-        maxWidth: '46rem',
-        margin: '0 auto',
-        padding: '5rem 1.5rem',
-      }}
-    >
-      <p
-        style={{
-          textTransform: 'uppercase',
-          letterSpacing: '0.12em',
-          fontSize: '0.75rem',
-          color: 'var(--muted)',
-          margin: 0,
-        }}
-      >
-        Scientific literature
-      </p>
-      <h1 style={{ fontSize: '2.5rem', lineHeight: 1.15, margin: '0.5rem 0 0' }}>DeepResearch</h1>
-      <p style={{ color: 'var(--muted)', fontSize: '1.05rem', marginTop: '0.75rem' }}>
-        Asks a research question across papers, clinical trials and patents, then returns a cited
-        report you can check.
-      </p>
+    <div className="shell">
+      <header className="masthead">
+        <p className="eyebrow">Scientific literature</p>
+        <h1>DeepResearch</h1>
+        <p>
+          Asks a research question across papers, preprints, clinical trials and patents, then
+          returns a report you can check — every claim cited, every search shown.
+        </p>
+      </header>
 
-      <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '2.5rem 0' }} />
+      <div className="columns">
+        <main>
+          {!hydrated ? null : !selected ? (
+            <p className="empty">Ask a question to begin. Reports usually take a minute or two.</p>
+          ) : loadError && !task ? (
+            <div className="notice notice-error" role="alert">
+              <h3>Could not load this task</h3>
+              <p>{loadError}</p>
+            </div>
+          ) : !task ? (
+            <p className="empty">Loading…</p>
+          ) : (
+            <>
+              <section className="card" aria-live="polite">
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '1rem',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <p style={{ margin: 0, fontWeight: 500, lineHeight: 1.45 }}>{task.question}</p>
+                  <StatusBadge status={task.status} />
+                </div>
 
-      <h2 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--muted)' }}>
-        Task lifecycle
-      </h2>
-      <ul style={{ listStyle: 'none', padding: 0, margin: '1rem 0 0' }}>
-        {STAGES.map((s) => (
-          <li
-            key={s.status}
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              gap: '0.75rem',
-              padding: '0.6rem 0',
-              borderBottom: '1px solid var(--line)',
-            }}
-          >
-            <code style={{ color: 'var(--accent)', fontSize: '0.85rem', minWidth: '6.5rem' }}>
-              {s.status}
-            </code>
-            <span>{s.label}</span>
-            <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--muted)' }}>
-              {isTerminal(s.status) ? 'terminal' : 'in progress'}
-            </span>
-          </li>
-        ))}
-      </ul>
+                {task.dateRange?.start || task.dateRange?.end ? (
+                  <p className="hint" style={{ marginTop: '0.5rem' }}>
+                    Restricted to {task.dateRange.start ?? 'any date'} → {task.dateRange.end ?? 'today'}
+                  </p>
+                ) : null}
 
-      <p style={{ marginTop: '2.5rem', fontSize: '0.9rem', color: 'var(--muted)' }}>
-        The backend is deployed and the task lifecycle is working. The interface for submitting
-        questions and reading reports is in progress.
-      </p>
-    </main>
+                {task.status === 'queued' || task.status === 'running' ? (
+                  <Progress task={task} />
+                ) : null}
+              </section>
+
+              {/*
+                A failed task states what went wrong, using the message the
+                backend stored. Showing a generic failure here would leave the
+                user unable to tell a transient outage from a bad question.
+              */}
+              {task.status === 'failed' ? (
+                <div className="notice notice-error" role="alert" style={{ marginTop: '1rem' }}>
+                  <h3>This research task failed</h3>
+                  <p>{task.error?.message ?? 'The task failed without recording a reason.'}</p>
+                  {task.error?.stage ? (
+                    <p className="hint" style={{ marginTop: '0.4rem' }}>
+                      Failed during: {task.error.stage} · after {task.attempt} attempt
+                      {task.attempt === 1 ? '' : 's'}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {task.status === 'completed' && task.report ? (
+                <div style={{ marginTop: '2rem' }}>
+                  <Report report={task.report} sources={task.sources} />
+                </div>
+              ) : null}
+            </>
+          )}
+        </main>
+
+        <aside className="rail">
+          <SubmitForm onCreated={onCreated} />
+
+          {task && task.queries.length > 0 ? <SearchPanel task={task} /> : null}
+
+          {tasks.length > 0 ? (
+            <section className="card">
+              <h2 className="card-title">Your tasks</h2>
+              <ul className="task-list">
+                {tasks.map((t) => (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className="task-item"
+                      aria-current={t.id === selected}
+                      onClick={() => setSelected(t.id)}
+                    >
+                      <q>{t.question}</q>
+                      <span className="hint">
+                        {new Date(t.at).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {t.id === selected && isPolling ? ' · updating' : ''}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </aside>
+      </div>
+    </div>
   );
 }
