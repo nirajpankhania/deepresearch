@@ -78,9 +78,58 @@ for _ in $(seq 1 90); do
 done
 check "task reaches completed" "$STATUS" "completed"
 
-HAS_REPORT="$("${CURL[@]}" -H "X-API-Key: $KEY" "$API/tasks/$TASK_ID" \
-  | python3 -c 'import sys,json;print("yes" if (json.load(sys.stdin).get("report") or "").strip() else "no")')"
-check "completed task has a report" "$HAS_REPORT" "yes"
+DOC="$("${CURL[@]}" -H "X-API-Key: $KEY" "$API/tasks/$TASK_ID")"
+
+check "completed task has a report" \
+  "$(printf '%s' "$DOC" | python3 -c 'import sys,json;print("yes" if (json.load(sys.stdin).get("report") or "").strip() else "no")')" "yes"
+
+echo
+echo "Retrieval"
+check "sub-queries were generated" \
+  "$(printf '%s' "$DOC" | python3 -c 'import sys,json;print("yes" if len(json.load(sys.stdin)["queries"]) >= 3 else "no")')" "yes"
+check "sources were retrieved" \
+  "$(printf '%s' "$DOC" | python3 -c 'import sys,json;print("yes" if len(json.load(sys.stdin)["sources"]) > 0 else "no")')" "yes"
+check "sources preserve structured metadata, not just URLs" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json
+s=json.load(sys.stdin)["sources"]
+rich=[x for x in s if x.get("dataset") and (x.get("doi") or x.get("arxivId") or x.get("pmid") or x.get("pmcId") or x.get("nctId"))]
+print("yes" if len(rich) >= len(s)//2 else "no")')" "yes"
+check "measured cost was recorded with transaction ids" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json
+c=json.load(sys.stdin)["cost"]
+print("yes" if c["totalUsd"] > 0 and len(c["txIds"]) > 0 else "no")')" "yes"
+check "spend stayed within the per-task cap" \
+  "$(printf '%s' "$DOC" | python3 -c 'import sys,json;print("yes" if json.load(sys.stdin)["cost"]["totalUsd"] <= 0.30 else "no")')" "yes"
+
+echo
+echo "Report quality"
+check "report cites at least one source" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json,re
+d=json.load(sys.stdin)
+body=(d.get("report") or "").split("## Sources")[0]
+print("yes" if re.search(r"\[\d+\]", body) else "no")')" "yes"
+# A citation pointing outside the corpus is a report that looks cited and is not.
+check "every citation is within the corpus" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json,re
+d=json.load(sys.stdin)
+body=(d.get("report") or "").split("## Sources")[0]
+n=len(d["sources"])
+nums={int(x) for m in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", body) for x in m.split(",")}
+print("yes" if all(1 <= i <= n for i in nums) else "no")')" "yes"
+check "every source link is absolute" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json
+s=json.load(sys.stdin)["sources"]
+print("yes" if all((x.get("url") or "").startswith("http") for x in s) else "no")')" "yes"
+check "claim grounding ran" \
+  "$(printf '%s' "$DOC" | python3 -c '
+import sys,json
+g=json.load(sys.stdin).get("grounding")
+print("yes" if g and g["totalCount"] > 0 else "no")')" "yes"
 
 echo
 echo "Idempotency"

@@ -9,13 +9,21 @@ each claim against the sources it cites.
 Backend runs on Google Cloud (Cloud Run, Cloud Tasks, Firestore, Cloud Storage,
 Vertex AI). Frontend is a Next.js app on Vercel.
 
-> **Status: backend complete, frontend built and pending deployment.** The full
-> pipeline runs on real infrastructure — plan, retrieve under a spend cap,
-> deduplicate, rerank, synthesise a cited report. The web app is built and
-> verified against the deployed backend; the Vercel project is not yet created.
-> Claim grounding is implemented. See [`docs/design.md`](docs/design.md) for the design
-> and rationale, and [`docs/example-output.md`](docs/example-output.md) for a
-> complete run.
+> **Status: complete, pending the Vercel deployment.** The full pipeline runs on
+> real infrastructure — plan, retrieve under a spend cap, deduplicate, rerank,
+> synthesise a cited report, verify every claim against the source it cites. The
+> web app is built and verified against the deployed backend; only the Vercel
+> project itself is outstanding.
+
+## Documentation
+
+| | |
+|---|---|
+| [`docs/design.md`](docs/design.md) | Architecture and the reasoning behind every choice |
+| [`docs/example-output.md`](docs/example-output.md) | A complete task, verbatim: queries, sources, report, verdicts |
+| [`docs/claim-grounding.md`](docs/claim-grounding.md) | The orchestration improvement, with before/after |
+| [`docs/scaling.md`](docs/scaling.md) | 10× and 100× scaling, and orchestration techniques explored |
+| [`docs/cost.md`](docs/cost.md) | Measured cost per task, fixed monthly cost, bottlenecks |
 
 **Deployed backend**
 
@@ -171,13 +179,21 @@ about the ones that did not verify. See
 ## Tests
 
 ```bash
-pnpm test              # unit tests
-scripts/smoke.sh       # end-to-end against the deployed stack
+pnpm test              # 200 unit tests
+scripts/smoke.sh       # 25 checks end-to-end against the deployed stack
 ```
 
-The smoke test covers auth rejection, request validation, the full lifecycle,
-and both layers of idempotency — that a duplicate enqueue is rejected by the
-queue, and that a redelivered message leaves a completed task untouched.
+Unit tests cover the logic where bugs are silent and correctness is checkable:
+identifier normalisation and the two-pass deduplication, the budget gate under
+concurrency, retry classification, plan and rerank response parsing, citation
+handling, and sentence splitting.
+
+The smoke test runs against the deployed system and covers auth rejection,
+request validation, the full lifecycle, retrieval quality (metadata preserved,
+measured cost recorded, spend within cap), report quality (citations present and
+all within the corpus, links absolute, grounding ran), both layers of idempotency
+— duplicate enqueue rejected by the queue, redelivery leaving a completed task
+untouched — and the failure path via forced failure.
 
 ---
 
@@ -308,10 +324,17 @@ which is the question that decides whether a tool like this gets used twice.
 
 Current, and honest.
 
-- **The retrieval pipeline is not built yet.** Reports are placeholder text; the
-  planning, retrieval, dedup, rerank and synthesis stages land in Phase 2-3.
-- **The frontend is a shell.** Deployed to prove the workspace build; the real
-  interface is Phase 4.
+- **The frontend is not yet deployed to Vercel.** It is built and verified
+  against the deployed backend locally, but the public URL does not exist yet.
+- **The interface has not been reviewed in a browser at every breakpoint.**
+  Types, build and unit tests pass and the data paths are verified end to end,
+  but visual polish is the least-tested surface.
+- **Grounding uses the same model family that wrote the report**, so shared blind
+  spots are possible. It also judges against the extracted snippet rather than
+  the full document, which is the main source of false negatives.
+- **No evaluation harness.** Claim grounding measures faithfulness to the
+  retrieved sources, which is checkable; it does not measure correctness, which
+  would need a labelled question set.
 - **Terraform state is local**, which is fine for a single operator and wrong for
   a team. A shared setup wants a GCS backend with state locking.
 - **The API runs `min-instances=1`** to avoid cold starts during review. That
@@ -336,3 +359,53 @@ Deliberately out of scope, with the alternative noted:
   trigger plus a staging environment.
 - **Adaptive follow-up searches and contradiction checks** — both are real
   improvements, both discussed in the Task 3 writeup rather than built.
+
+---
+
+## Submission
+
+**Deployed backend** · `https://deepresearch-api-i5hdokk27q-nw.a.run.app`
+**Deployed frontend** · pending Vercel project creation
+
+**Credentials.** The API requires `BACKEND_API_KEY` in an `X-API-Key` header.
+It is a self-issued token, not the Valyu key, and exists to stop an open endpoint
+spending against paid search and model APIs. Retrieve it with:
+
+```bash
+gcloud secrets versions access latest --secret=backend-api-key --project=deepresearch-504612
+```
+
+It should be rotated after review, since sharing it makes it no longer secret:
+
+```bash
+printf '%s' "$(openssl rand -hex 32)" | gcloud secrets versions add backend-api-key --data-file=-
+scripts/deploy.sh api    # picks up :latest
+```
+
+The Valyu key is not in this repository, is readable only by the worker's service
+account, and never reaches the browser or the logs.
+
+### Create a task and retrieve the result
+
+```bash
+KEY=$(gcloud secrets versions access latest --secret=backend-api-key --project=deepresearch-504612)
+API=https://deepresearch-api-i5hdokk27q-nw.a.run.app
+
+# Create — returns immediately
+TASK=$(curl -s -X POST "$API/tasks" \
+  -H 'Content-Type: application/json' -H "X-API-Key: $KEY" \
+  -d '{"question":"Does semaglutide preserve lean muscle mass in older adults during weight loss?"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+echo "$TASK"
+
+# Poll until complete — typically 90 seconds
+until [ "$(curl -s "$API/tasks/$TASK" -H "X-API-Key: $KEY" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["status"])')" = completed ]; do sleep 5; done
+
+# Read the report
+curl -s "$API/tasks/$TASK" -H "X-API-Key: $KEY" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["report"])'
+```
+
+To see the failure path, submit a question containing `__FORCE_FAILURE__`. It
+retries three times and lands in `failed` with a readable error.
