@@ -13,7 +13,7 @@ Vertex AI). Frontend is a Next.js app on Vercel.
 > pipeline runs on real infrastructure — plan, retrieve under a spend cap,
 > deduplicate, rerank, synthesise a cited report. The web app is built and
 > verified against the deployed backend; the Vercel project is not yet created.
-> Claim grounding is next. See [`docs/design.md`](docs/design.md) for the design
+> Claim grounding is implemented. See [`docs/design.md`](docs/design.md) for the design
 > and rationale, and [`docs/example-output.md`](docs/example-output.md) for a
 > complete run.
 
@@ -160,6 +160,13 @@ look impressive — see "Who this is for" above.
 
 Citations in the report are links to the matching source card, so checking a
 claim is one click rather than a scroll and a search.
+
+Alongside these, the **claim check** panel surfaces the grounding verdicts: a
+report-level "N of M cited claims are fully supported", and the specific
+sentences that did not verify with the reason each failed. Weak claims are listed
+first; supported ones are collapsed, because a reader checking a report cares
+about the ones that did not verify. See
+[`docs/claim-grounding.md`](docs/claim-grounding.md) for the before/after.
 
 ## Tests
 

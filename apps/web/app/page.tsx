@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { Grounding } from '@/components/grounding';
 import { Report } from '@/components/report';
 import { SearchPanel } from '@/components/search-panel';
 import { SubmitForm } from '@/components/submit-form';
@@ -127,6 +128,9 @@ export default function Home() {
               {task.status === 'completed' && task.report ? (
                 <div style={{ marginTop: '2rem' }}>
                   <Report report={task.report} sources={task.sources} />
+                  {task.grounding ? (
+                    <Grounding grounding={task.grounding} sources={task.sources} />
+                  ) : null}
                 </div>
               ) : null}
             </>

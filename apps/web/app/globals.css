@@ -685,3 +685,104 @@ button.link {
   white-space: nowrap;
   border: 0;
 }
+
+/* --- claim grounding ----------------------------------------------------- */
+
+.verdict-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+.verdict-bar > span {
+  display: block;
+  height: 100%;
+}
+
+.v-supported {
+  background: var(--accent);
+}
+.v-partial {
+  background: var(--warn);
+}
+.v-unsupported {
+  background: var(--danger);
+}
+
+.verdict-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin-top: 0.55rem;
+  font-size: 0.76rem;
+  color: var(--fg-muted);
+}
+
+.verdict-key i {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+}
+
+.claims {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.claim {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.8rem;
+  background: var(--bg);
+}
+
+.claim-supported {
+  border-left-color: var(--accent);
+}
+.claim-partial {
+  border-left-color: var(--warn);
+}
+.claim-unsupported {
+  border-left-color: var(--danger);
+}
+
+.claim-head {
+  margin-bottom: 0.45rem;
+}
+
+.claim-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.claim-reason {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.claim-sources {
+  margin: 0.5rem 0 0;
+  font-size: 0.76rem;
+  color: var(--fg-faint);
+}
+
+.claim-sources a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.claim-sources a:hover {
+  text-decoration: underline;
+}

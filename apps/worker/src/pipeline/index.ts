@@ -7,6 +7,7 @@ import type { GeminiClient } from '../clients/gemini.js';
 import type { ValyuClient } from '../clients/valyu.js';
 import { BudgetLedger } from './budget.js';
 import { dedupeSources } from './dedup.js';
+import { groundReport } from './ground.js';
 import { planQueries } from './plan.js';
 import { rerankSources } from './rerank.js';
 import { runRetrieval } from './retrieve.js';
@@ -40,9 +41,9 @@ export class InjectedFailure extends Error {
 /**
  * The research pipeline.
  *
- * Stages 1-5: plan, retrieve under a spend cap, deduplicate, rerank against the
- * original question, and synthesise a cited report. Stage 6 (claim grounding)
- * follows in the next phase.
+ * Stages 1-6: plan, retrieve under a spend cap, deduplicate, rerank against the
+ * original question, synthesise a cited report, then check every cited claim
+ * against the source it cites.
  */
 export async function runPipeline(ctx: PipelineContext): Promise<CompletionResult> {
   const { task, log, onProgress, faultInjectionEnabled, valyu, gemini, limits } = ctx;
@@ -114,10 +115,21 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     ...(task.dateRange ? { dateRange: task.dateRange } : {}),
   });
 
+  // --- Stage 6: check each cited claim against the source it cites ----------
+  await onProgress({ step: 'grounding', message: 'Checking claims against sources', pct: 95 });
+  const grounding = await groundReport({
+    gemini,
+    report: synthesis.report,
+    sources: selected,
+    log,
+  });
+
   log.info('pipeline complete', {
     sources: selected.length,
     citedSources: synthesis.citedSourceCount,
     uncitedSources: synthesis.uncitedSourceCount,
+    groundedClaims: grounding?.totalCount ?? 0,
+    supportedClaims: grounding?.supportedCount ?? 0,
     modelCalls: gemini.callCount,
     costUsd: budget.record().totalUsd,
   });
@@ -127,5 +139,8 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     queries,
     sources: selected,
     cost: budget.record(),
+    // Absent rather than empty when grounding could not run, so the interface
+    // can distinguish "not checked" from "checked and found nothing".
+    ...(grounding ? { grounding } : {}),
   };
 }
