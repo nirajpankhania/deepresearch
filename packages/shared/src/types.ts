@@ -207,6 +207,36 @@ export interface Task {
   tracePath?: string;
 }
 
+/**
+ * Whether a task has been abandoned and will never be finished by anyone.
+ *
+ * The lease alone does not answer this. A `running` task with a lapsed lease is
+ * normally *recoverable* — the next queue delivery reclaims it, which is the
+ * whole point of the lease. But if the worker container dies without writing a
+ * terminal state on every delivery, Cloud Tasks eventually exhausts its attempts
+ * and stops. Nothing then touches the document, so it sits in `running` forever
+ * and a polling client waits forever.
+ *
+ * The grace period must therefore exceed the window in which a retry could still
+ * arrive — the queue's `maxRetryDuration` plus its longest backoff. Reaping too
+ * eagerly is the worse error: it writes a terminal state that would cause a
+ * legitimate in-flight retry to no-op, turning a recoverable task into a
+ * permanently failed one.
+ */
+export function isOrphaned(
+  task: Pick<Task, 'status' | 'leaseExpiresAt'>,
+  graceSeconds: number,
+  now: number = Date.now(),
+): boolean {
+  if (task.status !== 'running') return false;
+  if (task.leaseExpiresAt === null) return false;
+
+  const expiredAt = new Date(task.leaseExpiresAt).getTime();
+  if (Number.isNaN(expiredAt)) return false;
+
+  return expiredAt < now - graceSeconds * 1000;
+}
+
 /** Request body for `POST /tasks`. */
 export interface CreateTaskRequest {
   question: string;

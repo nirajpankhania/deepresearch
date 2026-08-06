@@ -131,6 +131,27 @@ Two layers back this up. Cloud Tasks rejects a duplicate enqueue of
 timeout (900s) is the same value as the lease, so a lease cannot lapse while its
 holder is still running.
 
+### The task nobody finishes
+
+The lease recovers an attempt that died, because the next delivery reclaims it.
+It does not recover a task where *every* delivery died — the container is killed
+before it can write anything, so the catch block that would mark a failure never
+runs. Cloud Tasks eventually exhausts its attempts and stops, and the document is
+left `running` with a lapsed lease and nothing to reclaim it. A polling client
+waits forever.
+
+Tasks are therefore reaped on read: a `running` task whose lease lapsed more than
+an hour ago is marked `failed`, transactionally, with an error saying what
+happened. An hour because the grace period must exceed the window in which a
+retry could still legitimately arrive — `maxRetryDuration` plus the longest
+backoff, about 3000s. Reaping too eagerly is the worse error: it writes a
+terminal state, and a delivery arriving afterwards would correctly treat that as
+"already finished" and no-op, turning a recoverable task into a dead one.
+
+On read rather than on a schedule, because a sweeper needs Cloud Scheduler,
+another service account and another endpoint to secure, and reading is the only
+moment anyone is waiting on the answer.
+
 ---
 
 ## 5. Retrieval

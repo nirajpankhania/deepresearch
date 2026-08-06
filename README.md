@@ -412,6 +412,10 @@ Current, and honest.
   a team. A shared setup wants a GCS backend with state locking.
 - **The API runs `min-instances=1`** to avoid cold starts during review. That
   bills continuously and should be 0 outside a review window.
+- **Orphaned tasks are corrected on read, not on a schedule.** A task whose
+  worker died on every delivery is marked failed the next time someone fetches
+  it; one never fetched again stays `running` in Firestore. Harmless, but a
+  sweeper would be tidier.
 - **`BACKEND_API_KEY` is shared, not per-user.** There is no multi-user auth and
   no per-caller rate limiting; the key bounds cost exposure, not abuse by a
   legitimate holder.

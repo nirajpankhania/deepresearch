@@ -32,6 +32,14 @@ export interface ApiConfig {
   workerUrl: string;
   tasksInvokerSa: string;
   workerLocalUrl: string;
+  /**
+   * How long after its lease lapses a `running` task is treated as abandoned.
+   *
+   * Must exceed the queue's maxRetryDuration plus its longest backoff
+   * (900s x 3 attempts + 300s = 3000s), or a legitimate in-flight retry would
+   * find a terminal state and no-op, turning a recoverable task into a dead one.
+   */
+  orphanGraceSeconds: number;
 }
 
 export function loadConfig(): ApiConfig {
@@ -55,5 +63,6 @@ export function loadConfig(): ApiConfig {
     workerUrl: dispatcher === 'cloudtasks' ? required('WORKER_URL') : '',
     tasksInvokerSa: dispatcher === 'cloudtasks' ? required('TASKS_INVOKER_SA') : '',
     workerLocalUrl: dispatcher === 'local' ? required('WORKER_LOCAL_URL') : '',
+    orphanGraceSeconds: Number(optional('ORPHAN_GRACE_SECONDS', '3600')),
   };
 }

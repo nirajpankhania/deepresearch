@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { TaskDispatcher } from '@deepresearch/shared';
+import { isOrphaned, type TaskDispatcher } from '@deepresearch/shared';
 import { TaskRepository } from '@deepresearch/shared/firestore';
 import { createLogger } from '@deepresearch/shared/logger';
 
@@ -97,6 +97,22 @@ app.get('/tasks/:task_id', async (c) => {
 
   const task = await tasks.get(id);
   if (!task) return c.json({ error: 'Task not found' }, 404);
+
+  // A task whose worker died on every delivery is left `running` with a lapsed
+  // lease and nothing to reclaim it, because the queue has exhausted its
+  // attempts. Correct it here — reading is the only moment anyone is waiting on
+  // the answer, so it is the only moment the correction matters.
+  if (isOrphaned(task, config.orphanGraceSeconds)) {
+    const reaped = await tasks.reapIfOrphaned(id, config.orphanGraceSeconds);
+    if (reaped) {
+      log.warn('reaped orphaned task', {
+        taskId: id,
+        attempt: reaped.attempt,
+        stage: reaped.error?.stage,
+      });
+      return c.json(reaped);
+    }
+  }
 
   return c.json(task);
 });

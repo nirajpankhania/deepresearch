@@ -22,7 +22,7 @@ import type {
   Task,
   TaskError,
 } from './types.js';
-import { isTerminal } from './types.js';
+import { isOrphaned, isTerminal } from './types.js';
 
 const COLLECTION = 'tasks';
 
@@ -231,6 +231,49 @@ export class TaskRepository {
       });
 
       return 'written';
+    });
+  }
+
+  /**
+   * Marks an abandoned task as failed, if it is genuinely abandoned.
+   *
+   * Called lazily on read rather than by a scheduled sweeper. A sweeper would be
+   * more thorough but needs Cloud Scheduler, another service account and another
+   * endpoint to secure; reading is the only moment anyone is waiting on the
+   * answer, so it is also the only moment the correction matters.
+   *
+   * Re-checks the condition inside the transaction, because the whole risk here
+   * is racing a delivery that is about to claim the task legitimately.
+   */
+  async reapIfOrphaned(id: string, graceSeconds: number): Promise<Task | null> {
+    const ref = this.db.collection(COLLECTION).doc(id);
+
+    return this.db.runTransaction<Task | null>(async (tx) => {
+      const task = toTask(await tx.get(ref));
+      if (!task || !isOrphaned(task, graceSeconds)) return null;
+
+      const error: TaskError = {
+        message:
+          'This task stopped unexpectedly and did not finish. The service was interrupted while researching and has stopped retrying. Please submit the question again.',
+        stage: task.progress.step,
+      };
+      const now = Timestamp.now();
+
+      tx.update(ref, {
+        status: 'failed',
+        error,
+        progress: { step: task.progress.step, message: error.message, pct: task.progress.pct },
+        leaseExpiresAt: null,
+        updatedAt: now,
+      });
+
+      return {
+        ...task,
+        status: 'failed',
+        error,
+        leaseExpiresAt: null,
+        updatedAt: now.toDate().toISOString(),
+      };
     });
   }
 
