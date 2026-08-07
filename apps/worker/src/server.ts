@@ -1,7 +1,8 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { TaskRepository } from '@deepresearch/shared/firestore';
+import { TaskGoneError, TaskRepository } from '@deepresearch/shared/firestore';
 import { createLogger } from '@deepresearch/shared/logger';
+import type { PipelineStage } from '@deepresearch/shared';
 
 import { GeminiClient } from './clients/gemini.js';
 import { ValyuClient } from './clients/valyu.js';
@@ -80,11 +81,19 @@ app.post('/process', async (c) => {
   const { task } = claim;
   taskLog.info('task claimed', { attempt: task.attempt });
 
+  // The claim snapshot always reads `planning`, because the claim transaction
+  // sets it. Using it to report where a task failed made every failure claim to
+  // have happened during planning — including ones that failed in synthesis.
+  let stage: PipelineStage = 'planning';
+
   try {
     const result = await runPipeline({
       task,
       log: taskLog,
-      onProgress: (progress) => tasks.reportProgress(taskId, progress, config.limits.leaseSeconds),
+      onProgress: (progress) => {
+        stage = progress.step;
+        return tasks.reportProgress(taskId, progress, config.limits.leaseSeconds);
+      },
       faultInjectionEnabled: config.faultInjectionEnabled,
       publish: {
         queries: (queries) => tasks.publishQueries(taskId, queries, config.limits.leaseSeconds),
@@ -112,8 +121,15 @@ app.post('/process', async (c) => {
     taskLog.info('task finished', { outcome: written, reportLength: result.report.length });
     return c.json({ status: 'completed' }, 200);
   } catch (err: unknown) {
+    // Deleted mid-run. Stop cleanly: there is nothing to mark failed and
+    // nothing to retry, and returning 200 tells the queue to stop redelivering.
+    if (err instanceof TaskGoneError) {
+      taskLog.info('task deleted while running, stopping', { stage });
+      return c.json({ status: 'deleted' }, 200);
+    }
+
     const reason = err instanceof Error ? err.message : String(err);
-    taskLog.error('attempt failed', { attempt: task.attempt, reason });
+    taskLog.error('attempt failed', { attempt: task.attempt, stage, reason });
 
     if (task.attempt >= MAX_ATTEMPTS) {
       // Out of attempts: write a terminal failure a human can read, and return
@@ -121,7 +137,7 @@ app.post('/process', async (c) => {
       await tasks.fail(taskId, {
         message:
           'Research failed after multiple attempts. This is usually a temporary problem with an upstream service — please try submitting the question again.',
-        stage: task.progress.step,
+        stage,
       });
       taskLog.error('task failed permanently', { attempts: task.attempt });
       return c.json({ status: 'failed' }, 200);

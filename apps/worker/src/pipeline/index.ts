@@ -2,7 +2,20 @@ import type { CompletionResult } from '@deepresearch/shared/firestore';
 import type { Logger } from '@deepresearch/shared/logger';
 import type { PlannedQuery, Progress, Source, Task } from '@deepresearch/shared';
 
+import { TaskGoneError } from '@deepresearch/shared/firestore';
+
 import { FORCE_FAILURE_SENTINEL } from '../config.js';
+
+/**
+ * Publishing intermediate state is a convenience: a failed write should not lose
+ * a report that is otherwise fine. A *deleted* task is the exception — that is
+ * the user asking us to stop, and continuing would spend real money producing a
+ * report with nowhere to go.
+ */
+function ignoreUnlessGone(err: unknown): never | undefined {
+  if (err instanceof TaskGoneError) throw err;
+  return undefined;
+}
 import type { GeminiClient } from '../clients/gemini.js';
 import type { ValyuClient } from '../clients/valyu.js';
 import { BudgetLedger } from './budget.js';
@@ -67,7 +80,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
 
   // Published before retrieval starts, so the sub-queries are visible while they
   // are being searched rather than only in the finished report.
-  await ctx.publish.queries(planned).catch(() => undefined);
+  await ctx.publish.queries(planned).catch(ignoreUnlessGone);
 
   log.info('plan complete', {
     queryCount: planned.length,
@@ -115,7 +128,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
 
   // Published before synthesis so citations in the streaming draft resolve to
   // real source cards immediately.
-  await ctx.publish.sources(selected).catch(() => undefined);
+  await ctx.publish.sources(selected).catch(ignoreUnlessGone);
 
   // --- Stage 5: synthesise --------------------------------------------------
   await onProgress({
@@ -133,6 +146,9 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
   });
 
   // --- Stage 6: check each cited claim against the source it cites ----------
+  // This progress write is also the deletion check before the last model call:
+  // it throws TaskGoneError if the task was removed during synthesis, which is
+  // the longest window in which that can happen.
   await onProgress({ step: 'grounding', message: 'Checking claims against sources', pct: 95 });
   const grounding = await groundReport({
     gemini,

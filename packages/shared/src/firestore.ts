@@ -32,6 +32,35 @@ import { isOrphaned, isTerminal } from './types.js';
 const COLLECTION = 'tasks';
 
 /**
+ * Thrown when a write targets a task that no longer exists.
+ *
+ * Distinguished from an ordinary failure because the response is opposite: an
+ * ordinary failure should be retried, whereas a deleted task should stop
+ * immediately and never be retried. The user asked for it to go away.
+ */
+export class TaskGoneError extends Error {
+  constructor(id: string) {
+    super(`task ${id} no longer exists`);
+    this.name = 'TaskGoneError';
+  }
+}
+
+/** gRPC NOT_FOUND, which Firestore returns when updating a missing document. */
+function isMissingDocument(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: number }).code === 5;
+}
+
+/** Runs a write, converting "document is gone" into a distinguishable error. */
+async function write(id: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err: unknown) {
+    if (isMissingDocument(err)) throw new TaskGoneError(id);
+    throw err;
+  }
+}
+
+/**
  * Stored form of a task. Dates are Firestore `Timestamp`s here and ISO strings
  * on `Task`; this module is the only place that knows both.
  */
@@ -188,14 +217,16 @@ export class TaskRepository {
    */
   async publishQueries(id: string, queries: PlannedQuery[], leaseSeconds: number): Promise<void> {
     const now = Timestamp.now();
-    await this.db
-      .collection(COLLECTION)
-      .doc(id)
-      .update({
-        queries,
-        updatedAt: now,
-        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
-      });
+    await write(id, () =>
+      this.db
+        .collection(COLLECTION)
+        .doc(id)
+        .update({
+          queries,
+          updatedAt: now,
+          leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+        }),
+    );
   }
 
   /**
@@ -208,14 +239,16 @@ export class TaskRepository {
    */
   async publishSources(id: string, sources: Source[], leaseSeconds: number): Promise<void> {
     const now = Timestamp.now();
-    await this.db
-      .collection(COLLECTION)
-      .doc(id)
-      .update({
-        sources,
-        updatedAt: now,
-        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
-      });
+    await write(id, () =>
+      this.db
+        .collection(COLLECTION)
+        .doc(id)
+        .update({
+          sources,
+          updatedAt: now,
+          leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+        }),
+    );
   }
 
   /**
@@ -227,14 +260,16 @@ export class TaskRepository {
    */
   async publishDraft(id: string, reportDraft: string, leaseSeconds: number): Promise<void> {
     const now = Timestamp.now();
-    await this.db
-      .collection(COLLECTION)
-      .doc(id)
-      .update({
-        reportDraft,
-        updatedAt: now,
-        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
-      });
+    await write(id, () =>
+      this.db
+        .collection(COLLECTION)
+        .doc(id)
+        .update({
+          reportDraft,
+          updatedAt: now,
+          leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+        }),
+    );
   }
 
   /**
@@ -260,14 +295,16 @@ export class TaskRepository {
   /** Report progress and extend the lease, so a long but healthy task is not reclaimed. */
   async reportProgress(id: string, progress: Progress, leaseSeconds: number): Promise<void> {
     const now = Timestamp.now();
-    await this.db
-      .collection(COLLECTION)
-      .doc(id)
-      .update({
-        progress,
-        updatedAt: now,
-        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
-      });
+    await write(id, () =>
+      this.db
+        .collection(COLLECTION)
+        .doc(id)
+        .update({
+          progress,
+          updatedAt: now,
+          leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+        }),
+    );
   }
 
   /**
@@ -281,12 +318,18 @@ export class TaskRepository {
    */
   async release(id: string, message: string): Promise<void> {
     const now = Timestamp.now();
-    await this.db.collection(COLLECTION).doc(id).update({
-      status: 'queued',
-      leaseExpiresAt: null,
-      updatedAt: now,
-      progress: { step: 'queued', message, pct: 0 },
-    });
+    try {
+      await this.db.collection(COLLECTION).doc(id).update({
+        status: 'queued',
+        leaseExpiresAt: null,
+        updatedAt: now,
+        progress: { step: 'queued', message, pct: 0 },
+      });
+    } catch (err: unknown) {
+      // A deleted task has nothing to hand back. Throwing here would throw from
+      // inside the handler's own error path and turn a clean stop into a 500.
+      if (!isMissingDocument(err)) throw err;
+    }
   }
 
   /**
@@ -379,12 +422,14 @@ export class TaskRepository {
   }
 
   /** Terminal failure with an error a human can act on. */
-  async fail(id: string, error: TaskError): Promise<'written' | 'already-terminal'> {
+  async fail(id: string, error: TaskError): Promise<'written' | 'already-terminal' | 'gone'> {
     const ref = this.db.collection(COLLECTION).doc(id);
 
     return this.db.runTransaction(async (tx) => {
       const task = toTask(await tx.get(ref));
-      if (!task) throw new Error(`task ${id} not found`);
+      // Deleted while running. Nothing to mark failed, and nothing wrong: the
+      // user asked for it to go away.
+      if (!task) return 'gone';
       if (isTerminal(task.status)) return 'already-terminal';
 
       tx.update(ref, {

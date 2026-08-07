@@ -1,6 +1,8 @@
 import type { DateRange, PlannedQuery, Source } from '@deepresearch/shared';
 import type { Logger } from '@deepresearch/shared/logger';
 
+import { TaskGoneError } from '@deepresearch/shared/firestore';
+
 import type { ValyuClient } from '../clients/valyu.js';
 import type { BudgetLedger } from './budget.js';
 import { estimateSearchCost, toSource } from './sources.js';
@@ -92,7 +94,9 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
           target.costUsd = outcome.costUsd;
           target.done = true;
         }
-        await opts.onQueriesChanged?.(queries).catch(() => undefined);
+        await opts.onQueriesChanged?.(queries).catch((e: unknown) => {
+          if (e instanceof TaskGoneError) throw e;
+        });
 
         return { index, results: outcome.results };
       } catch (err: unknown) {
@@ -104,7 +108,9 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
           target.error = 'This search failed and its results are missing from the report';
           target.done = true;
         }
-        await opts.onQueriesChanged?.(queries).catch(() => undefined);
+        await opts.onQueriesChanged?.(queries).catch((e: unknown) => {
+          if (e instanceof TaskGoneError) throw e;
+        });
         throw Object.assign(err instanceof Error ? err : new Error(String(err)), { index });
       }
     }),

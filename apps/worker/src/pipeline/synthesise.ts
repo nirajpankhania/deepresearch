@@ -1,6 +1,8 @@
 import type { DateRange, Source } from '@deepresearch/shared';
 import type { Logger } from '@deepresearch/shared/logger';
 
+import { TaskGoneError } from '@deepresearch/shared/firestore';
+
 import type { GeminiClient } from '../clients/gemini.js';
 
 /**
@@ -229,8 +231,11 @@ export async function synthesiseReport(opts: SynthesisOptions): Promise<Synthesi
     if (now - lastPublished < DRAFT_INTERVAL_MS) return;
     lastPublished = now;
     // A failed publish must not abort generation: the draft is a convenience,
-    // the report is the deliverable.
-    await opts.onDraft(accumulated).catch(() => undefined);
+    // the report is the deliverable. A *deleted* task is different — stop
+    // immediately rather than finish an expensive call nobody will read.
+    await opts.onDraft(accumulated).catch((err: unknown) => {
+      if (err instanceof TaskGoneError) throw err;
+    });
   });
 
   const { report: cleaned, removed } = stripInvalidCitations(body.trim(), sources.length);
