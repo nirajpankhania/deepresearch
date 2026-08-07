@@ -1,4 +1,30 @@
-import type { Source } from '@deepresearch/shared';
+import type { EvidenceType, Source } from '@deepresearch/shared';
+
+/**
+ * Study design, in the reader's language.
+ *
+ * `protocol` is the one that earns this feature: a registered trial record looks
+ * indistinguishable from a completed trial in a list of titles, and treating one
+ * as evidence of an effect is the most misleading thing this tool could do.
+ */
+const EVIDENCE_LABEL: Record<EvidenceType, string> = {
+  'meta-analysis': 'Meta-analysis',
+  rct: 'Randomised trial',
+  observational: 'Observational',
+  review: 'Review',
+  'in-vitro': 'Lab / animal',
+  modelling: 'Modelling',
+  'case-report': 'Case report',
+  protocol: 'Protocol — no results',
+  other: '',
+};
+
+/** Only the two extremes are coloured; the rest would be noise. */
+const EVIDENCE_CLASS: Partial<Record<EvidenceType, string>> = {
+  'meta-analysis': 'ev-strong',
+  rct: 'ev-strong',
+  protocol: 'ev-weak',
+};
 
 /**
  * Domain feature 1 — source cards that show what a researcher needs to judge a
@@ -47,6 +73,11 @@ export function SourceCard({ source, index }: { source: Source; index: number })
 
       <div className="source-meta">
         <span className="tag">{datasetLabel(source.dataset)}</span>
+        {source.evidenceType && EVIDENCE_LABEL[source.evidenceType] ? (
+          <span className={`tag ${EVIDENCE_CLASS[source.evidenceType] ?? ''}`}>
+            {EVIDENCE_LABEL[source.evidenceType]}
+          </span>
+        ) : null}
         {source.publicationDate ? <span>{source.publicationDate}</span> : null}
         {authors ? <span>{authors}</span> : null}
         {id ? (
@@ -64,7 +95,17 @@ export function SourceCard({ source, index }: { source: Source; index: number })
             className="score"
             title={
               source.rerankScore !== undefined
-                ? 'Relevance to your question, scored after retrieval'
+                ? [
+                    'Composite score against your question',
+                    source.topicalScore !== undefined
+                      ? `on topic ${Math.round(source.topicalScore * 100)}%`
+                      : null,
+                    source.directnessScore !== undefined
+                      ? `measures the outcome asked about ${Math.round(source.directnessScore * 100)}%`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
                 : 'Relevance score from the search that found this'
             }
           >
@@ -75,6 +116,9 @@ export function SourceCard({ source, index }: { source: Source; index: number })
           </span>
         ) : null}
       </div>
+
+      {/* Why the ranker scored it as it did, in its own words. */}
+      {source.rerankReason ? <p className="source-reason">{source.rerankReason}</p> : null}
 
       {/*
         A merged alternate is usually the preprint of a published paper, or the

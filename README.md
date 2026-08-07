@@ -216,9 +216,14 @@ Three, chosen because they make the retrieval legible rather than because they
 look impressive — see [Who this is for](#who-this-is-for) below.
 
 1. **Source cards** carrying dataset, publication date, authors, resolvable
-   identifier (DOI, arXiv, PMID, PMC, NCT), relevance score, and any merged
+   identifier (DOI, arXiv, PMID, PMC, NCT), composite relevance, and any merged
    preprint/published alternate. This is what preserving Valyu's structured
-   metadata is *for*.
+   metadata is *for*. Each card also shows the **study design** — "Randomised
+   trial", "Meta-analysis", "Protocol — no results" — with the reranker's
+   one-line reason. The protocol label is the one that earns its place: a
+   registered trial record reads exactly like a completed trial in a list of
+   titles, and mistaking one for the other is the worst error this tool could
+   invite.
 2. **A "what was searched" panel** showing each generated sub-query, which
    corpora it targeted, its result count and rationale, plus the measured cost
    and how many results were merged as duplicates. Failed sub-queries are shown

@@ -73,6 +73,26 @@ export interface PlannedQuery {
 }
 
 /**
+ * Study design, as judged during reranking.
+ *
+ * Deliberately about *design*, not publication status. "Preprint" is not a study
+ * design — a preprint can report a randomised trial — so conflating the two
+ * would make an RCT on bioRxiv indistinguishable from a modelling paper. Preprint
+ * status is derived from the source dataset instead, which is deterministic and
+ * free.
+ */
+export type EvidenceType =
+  | 'meta-analysis'
+  | 'rct'
+  | 'observational'
+  | 'review'
+  | 'in-vitro'
+  | 'modelling'
+  | 'case-report'
+  | 'protocol'
+  | 'other';
+
+/**
  * A retrieved source with Valyu's structured metadata preserved.
  *
  * Field availability varies by source type — an arXiv preprint has no journal,
@@ -106,8 +126,20 @@ export interface Source {
 
   /** Valyu's relevance score for the sub-query that surfaced this result. */
   relevanceScore?: number;
-  /** Score from the rerank pass, computed against the original question. */
+
+  /**
+   * Composite score from reranking, 0-1. What the corpus is ordered by.
+   * Combines the three judgements below; see `scoreSource` for the weighting.
+   */
   rerankScore?: number;
+  /** How much this source is about the question as asked, 0-1. */
+  topicalScore?: number;
+  /** Whether it measures the outcome asked about or a proxy for it, 0-1. */
+  directnessScore?: number;
+  /** Study design. A protocol describes a plan; a trial reports a result. */
+  evidenceType?: EvidenceType;
+  /** One line on why it scored as it did. Shown to the reader. */
+  rerankReason?: string;
 
   /** Extracted content, truncated before it reaches a model prompt. */
   snippet?: string;

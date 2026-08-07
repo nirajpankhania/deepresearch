@@ -184,10 +184,39 @@ so identifier matching alone reports them as two sources. The lower-relevance
 copy is retained as a `mergedAlternate` rather than discarded, because which
 version was found is itself informative.
 
-**Rerank.** Valyu scores relevance per sub-query, so a source that ranked highly
-for a narrow facet may be marginal to the question actually asked. One Flash call
-re-scores the merged corpus against the original question before it is capped at
-~20 sources.
+**Rerank.** Valyu scores relevance per sub-query, so after merging five
+sub-queries the scores are five incommensurable scales. One Flash call re-judges
+the merged corpus against the original question.
+
+It asks for three judgements per source rather than one score, because a single
+relevance number was measurably not ranking: on real tasks it produced **three
+distinct values across twenty sources**, leaving most of the order to arbitrary
+prior position. The axes are *topical* (about the question as written),
+*directness* (measures the outcome asked about, or a proxy) and *evidence*
+(study design). A composite weights them 0.55 / 0.20 / 0.25, with a small
+discount for preprints — derived from the corpus rather than asked of the model,
+since "preprint" is a publication status and not a study design.
+
+The judgement that matters most is **protocol**: a registered trial record
+describes a study that may not have produced a single data point, and its title
+is indistinguishable from a completed trial. Treating one as evidence of an
+effect is the most misleading thing this pipeline could do, so it carries the
+lowest design weight and is labelled in the interface.
+
+**Facet coverage.** Selection guarantees every sub-query that retrieved results
+contributes sources, before remaining slots go to the best scores. Pure ranking
+silently deleted facets: observed on a real task, a sub-query that retrieved ten
+results contributed **zero** sources, so the report quietly answered a narrower
+question than the one asked, and nothing surfaced it.
+
+After both changes, the same question went from 3 distinct scores across 20
+sources with one facet lost, to 17 distinct scores across 19 sources with every
+facet represented.
+
+A dedicated cross-encoder reranker would beat this and is excluded by the
+constraints: a hosted one adds a third-party credential and breaks the two-secret
+inventory, and self-hosting means GPU inference, which the brief rules out. Using
+the model listwise is the constrained-correct choice.
 
 **Synthesise.** One Pro-tier call over numbered sources with full metadata. The
 prompt instructs the model to omit claims it cannot ground in the provided

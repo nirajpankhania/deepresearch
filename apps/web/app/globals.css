@@ -1054,3 +1054,25 @@ button.link {
     opacity: 1;
   }
 }
+
+/* --- evidence badges ------------------------------------------------------ */
+
+.ev-strong {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-soft);
+}
+
+.ev-weak {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  background: var(--warn-soft);
+}
+
+.source-reason {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  font-style: italic;
+  line-height: 1.45;
+}
