@@ -68,6 +68,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
+  // 204 carries no body, and parsing one would throw on an otherwise fine call.
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -77,6 +79,10 @@ export function createTask(body: CreateTaskRequest): Promise<CreateTaskResponse>
 
 export function getTask(taskId: string): Promise<Task> {
   return request<Task>(`/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  await request<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
 }
 
 /**

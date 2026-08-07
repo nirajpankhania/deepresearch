@@ -140,6 +140,25 @@ export function useTask(taskId: string | null): TaskState {
         }
       });
 
+      // While only the draft grows, the server sends the appended characters
+      // rather than the whole task. Resending everything made each frame ~133KB,
+      // most of it source text nothing renders, and arrive in visible lumps.
+      es.addEventListener('draft', (event) => {
+        if (cancelled) return;
+        try {
+          const { append } = JSON.parse((event as MessageEvent<string>).data) as {
+            append?: string;
+          };
+          if (!append) return;
+          streamFailures.current = 0;
+          setTask((current) =>
+            current ? { ...current, reportDraft: (current.reportDraft ?? '') + append } : current,
+          );
+        } catch {
+          // Ignore; the next full frame resynchronises.
+        }
+      });
+
       es.onerror = () => {
         if (cancelled) return;
         es.close();

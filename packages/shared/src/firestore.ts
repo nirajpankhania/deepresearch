@@ -367,6 +367,17 @@ export class TaskRepository {
     });
   }
 
+  /**
+   * Delete a task permanently.
+   *
+   * No soft delete: there is no user account to scope a recycle bin to, and a
+   * task the user has discarded holding a report and 20 sources in storage
+   * indefinitely is worse than losing it. Re-asking the question is cheap.
+   */
+  async remove(id: string): Promise<void> {
+    await this.db.collection(COLLECTION).doc(id).delete();
+  }
+
   /** Terminal failure with an error a human can act on. */
   async fail(id: string, error: TaskError): Promise<'written' | 'already-terminal'> {
     const ref = this.db.collection(COLLECTION).doc(id);

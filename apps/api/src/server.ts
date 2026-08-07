@@ -3,13 +3,14 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import { isOrphaned, isTerminal, type TaskDispatcher } from '@deepresearch/shared';
+import { isOrphaned, isTerminal, type Task, type TaskDispatcher } from '@deepresearch/shared';
 import { TaskRepository } from '@deepresearch/shared/firestore';
 import { createLogger } from '@deepresearch/shared/logger';
 
 import { requireApiKey } from './auth.js';
 import { loadConfig } from './config.js';
 import { CloudTasksDispatcher, LocalHttpDispatcher } from './dispatchers.js';
+import { forStream, frameSignature } from './stream.js';
 import { parseCreateTaskRequest } from './validation.js';
 
 const log = createLogger({ service: 'api' });
@@ -119,6 +120,26 @@ app.get('/tasks/:task_id', async (c) => {
 });
 
 /**
+ * Remove a task and its stored report.
+ *
+ * Permitted while a task is still running. The worker's next write to a deleted
+ * document fails, that attempt errors, and the redelivery finds no document and
+ * returns 200 — the not-found path that already exists for exactly this shape of
+ * race. Nothing is orphaned and nothing needs a distributed cancel.
+ */
+app.delete('/tasks/:task_id', async (c) => {
+  const id = c.req.param('task_id');
+
+  const task = await tasks.get(id);
+  if (!task) return c.json({ error: 'Task not found' }, 404);
+
+  await tasks.remove(id);
+  log.info('task deleted', { taskId: id, status: task.status });
+
+  return c.body(null, 204);
+});
+
+/**
  * Server-sent events for a single task.
  *
  * The listener lives here rather than in the Vercel route handler for a specific
@@ -139,6 +160,10 @@ app.get('/tasks/:task_id/stream', async (c) => {
   return streamSSE(c, async (stream) => {
     let unsubscribe: (() => void) | null = null;
     let settled = false;
+    // Tracks what the client already has, so a draft update sends only the new
+    // characters rather than the whole document again.
+    let sentDraftLength = 0;
+    let lastSkeleton = '';
 
     const finish = (): void => {
       if (settled) return;
@@ -157,8 +182,24 @@ app.get('/tasks/:task_id/stream', async (c) => {
       unsubscribe = tasks.watch(
         id,
         (task) => {
+          const draft = task.reportDraft ?? '';
+          const skeleton = frameSignature(task);
+
+          // While only the draft is growing — which is most frames during
+          // synthesis — send just the appended characters. Resending the whole
+          // task made every frame ~133KB and arrive in visible lumps.
+          const draftOnly =
+            skeleton === lastSkeleton && draft.length > sentDraftLength && sentDraftLength > 0;
+
+          const frame = draftOnly
+            ? { event: 'draft', data: JSON.stringify({ append: draft.slice(sentDraftLength) }) }
+            : { event: 'task', data: JSON.stringify(forStream(task)) };
+
+          lastSkeleton = skeleton;
+          sentDraftLength = draft.length;
+
           void stream
-            .writeSSE({ event: 'task', data: JSON.stringify(task) })
+            .writeSSE(frame)
             .then(() => {
               if (isTerminal(task.status)) {
                 finish();

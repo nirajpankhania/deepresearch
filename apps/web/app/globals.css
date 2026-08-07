@@ -1010,3 +1010,47 @@ button.link {
   width: 100%;
   margin-bottom: 0.5rem;
 }
+
+/* --- task rows with delete ----------------------------------------------- */
+
+.task-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+
+.task-row .task-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-delete {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--fg-faint);
+  border: 1px solid transparent;
+  padding: 0 0.5rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.task-row:hover .task-delete,
+.task-delete:focus-visible {
+  opacity: 1;
+}
+
+.task-delete:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  opacity: 1;
+}
+
+/* Touch devices have no hover, so the control must always be reachable. */
+@media (hover: none) {
+  .task-delete {
+    opacity: 1;
+  }
+}

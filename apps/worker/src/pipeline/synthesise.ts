@@ -193,10 +193,12 @@ export interface SynthesisOptions {
 /**
  * How often partial text is published while streaming.
  *
- * Every chunk would mean a Firestore write per token. Three quarters of a second
- * reads as continuous to a human and costs ~50 writes across a synthesis.
+ * A write per token would be absurd, but 750ms was too coarse: it arrived in
+ * visible ~700-character lumps. Now that a draft frame carries only the appended
+ * characters rather than the whole task, publishing is cheap enough to do four
+ * times a second. The client smooths the remainder into a per-character reveal.
  */
-const DRAFT_INTERVAL_MS = 750;
+const DRAFT_INTERVAL_MS = 250;
 
 export interface SynthesisResult {
   report: string;

@@ -9,6 +9,7 @@ import { SearchPanel } from '@/components/search-panel';
 import { SubmitForm } from '@/components/submit-form';
 import { Progress, StatusBadge } from '@/components/status';
 import { useTask } from '@/hooks/use-task';
+import { useTypewriter } from '@/hooks/use-typewriter';
 
 /**
  * Submitted tasks are remembered in localStorage so a refresh does not lose
@@ -66,6 +67,34 @@ export default function Home() {
   const live = task?.status === 'running' || task?.status === 'queued';
   const streamingReport = task?.status === 'running' && Boolean(task.reportDraft);
 
+  // Smooths the bursts the transport delivers into a continuous reveal. Text
+  // cannot stream per-token from the worker — it crosses Firestore and two
+  // services — so the pacing happens here.
+  const revealed = useTypewriter(task?.reportDraft ?? '', Boolean(streamingReport));
+
+  const remove = useCallback(
+    async (id: string) => {
+      setTasks((previous) => {
+        const next = previous.filter((t) => t.id !== id);
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // Losing the local index is survivable; the delete still happened.
+        }
+        return next;
+      });
+
+      setSelected((current) => (current === id ? null : current));
+      setComposing((current) => current || selected === id);
+
+      // Fire and forget: the row is already gone from the user's view, and a
+      // failed delete leaves a document nobody references rather than a broken
+      // interface.
+      await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => undefined);
+    },
+    [selected],
+  );
+
   return (
     <div className="shell">
       <header className="masthead">
@@ -97,26 +126,37 @@ export default function Home() {
               <ul className="task-list">
                 {tasks.map((t) => (
                   <li key={t.id}>
-                    <button
-                      type="button"
-                      className="task-item"
-                      aria-current={t.id === selected}
-                      onClick={() => {
-                        setSelected(t.id);
-                        setComposing(false);
-                      }}
-                    >
-                      <q>{t.question}</q>
-                      <span className="hint">
-                        {new Date(t.at).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                        {t.id === selected && live ? ' · running' : ''}
-                      </span>
-                    </button>
+                    <div className="task-row">
+                      <button
+                        type="button"
+                        className="task-item"
+                        aria-current={t.id === selected}
+                        onClick={() => {
+                          setSelected(t.id);
+                          setComposing(false);
+                        }}
+                      >
+                        <q>{t.question}</q>
+                        <span className="hint">
+                          {new Date(t.at).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          {t.id === selected && live ? ' · running' : ''}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="task-delete"
+                        aria-label={`Delete: ${t.question}`}
+                        title="Delete"
+                        onClick={() => void remove(t.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -187,9 +227,9 @@ export default function Home() {
               {task.queries.length > 0 ? <SearchPanel task={task} /> : null}
 
               {/* The report as it is written, then the finished document. */}
-              {streamingReport && task.reportDraft ? (
+              {streamingReport && revealed ? (
                 <div style={{ marginTop: '2rem' }}>
-                  <Report report={task.reportDraft} sources={task.sources} streaming />
+                  <Report report={revealed} sources={task.sources} streaming />
                 </div>
               ) : null}
 
