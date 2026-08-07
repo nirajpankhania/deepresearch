@@ -53,6 +53,8 @@ export interface GenerateParams {
   temperature?: number;
   /** When set, the model is constrained to emit JSON matching this schema. */
   responseSchema?: Record<string, unknown>;
+  /** Overrides the default per-call timeout. Larger prompts need longer. */
+  timeoutMs?: number;
 }
 
 const TIMEOUT_MS = 60_000;
@@ -109,7 +111,7 @@ export class GeminiClient {
         }),
       {
         attempts: ATTEMPTS,
-        timeoutMs: TIMEOUT_MS,
+        timeoutMs: params.timeoutMs ?? TIMEOUT_MS,
         onRetry: ({ attempt, reason }) =>
           this.opts.log.warn('gemini retry', { attempt, reason, model, tier: params.tier }),
       },

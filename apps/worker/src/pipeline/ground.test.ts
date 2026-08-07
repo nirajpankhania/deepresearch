@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Source } from '@deepresearch/shared';
 
-import { extractClaims, parseGroundingResponse, splitSentences } from './ground.js';
+import { buildPrompt, extractClaims, parseGroundingResponse, splitSentences } from './ground.js';
 
 const sources: Source[] = [
   { id: 'doi:10.1/a', title: 'A', url: 'https://a' },
@@ -140,5 +140,51 @@ describe('parseGroundingResponse', () => {
 
   it('reports per-claim mode', () => {
     expect(parseGroundingResponse({ verdicts: [] }, claims).mode).toBe('per-claim');
+  });
+});
+
+describe('buildPrompt', () => {
+  const sources: Source[] = [
+    { id: 'a', title: 'Source A', url: 'https://a', snippet: 'AAA_EVIDENCE_AAA' },
+    { id: 'b', title: 'Source B', url: 'https://b', snippet: 'BBB_EVIDENCE_BBB' },
+    { id: 'c', title: 'Source C', url: 'https://c', snippet: 'CCC_UNCITED_CCC' },
+  ];
+  const claims = [
+    { sentence: 'First claim [1].', citedSourceIds: ['a'] },
+    { sentence: 'Second claim [1].', citedSourceIds: ['a'] },
+    { sentence: 'Third claim [1, 2].', citedSourceIds: ['a', 'b'] },
+  ];
+
+  // Inlining evidence per claim repeated a source's full text once per citing
+  // sentence, which pushed the prompt past the model timeout on a 20-source
+  // report and cost three attempts before giving up.
+  it('states each source text exactly once however many claims cite it', () => {
+    const prompt = buildPrompt(claims, sources);
+    expect(prompt.split('AAA_EVIDENCE_AAA')).toHaveLength(2);
+  });
+
+  it('omits sources no claim cites', () => {
+    expect(buildPrompt(claims, sources)).not.toContain('CCC_UNCITED_CCC');
+  });
+
+  it('references sources by their citation number, matching the report', () => {
+    const prompt = buildPrompt(claims, sources);
+    expect(prompt).toContain('[2] cites source 1, 2');
+    expect(prompt).toContain('[1] Source A');
+  });
+
+  // The property that actually broke: prompt size must grow with the number of
+  // claims, not with claims × evidence. With realistic 1500-char sources, the
+  // old structure grew ~1500 chars per additional claim; this one grows by the
+  // length of a sentence.
+  it('grows with claim count, not with claim count times evidence size', () => {
+    const big: Source[] = [{ id: 'a', title: 'Big', url: 'https://a', snippet: 'E'.repeat(1500) }];
+    const claim = (i: number) => ({ sentence: `Claim ${i} [1].`, citedSourceIds: ['a'] });
+
+    const one = buildPrompt([claim(0)], big).length;
+    const twenty = buildPrompt(Array.from({ length: 20 }, (_, i) => claim(i)), big).length;
+
+    // 19 more claims must cost far less than 19 more copies of the evidence.
+    expect(twenty - one).toBeLessThan(1500);
   });
 });

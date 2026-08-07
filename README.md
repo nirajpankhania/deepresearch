@@ -9,11 +9,11 @@ each claim against the sources it cites.
 Backend runs on Google Cloud (Cloud Run, Cloud Tasks, Firestore, Cloud Storage,
 Vertex AI). Frontend is a Next.js app on Vercel.
 
-> **Status: complete, pending the Vercel deployment.** The full pipeline runs on
-> real infrastructure — plan, retrieve under a spend cap, deduplicate, rerank,
-> synthesise a cited report, verify every claim against the source it cites. The
-> web app is built and verified against the deployed backend; only the Vercel
-> project itself is outstanding.
+> **Status: deployed and working end to end.** Submit a question at the URL
+> below and it runs the full pipeline on real infrastructure — plan, retrieve
+> under a spend cap, deduplicate, rerank, synthesise a cited report, then verify
+> every claim against the source it cites. A typical task takes ~90 seconds and
+> costs about $0.02 in retrieval.
 
 ## Documentation
 
@@ -25,10 +25,11 @@ Vertex AI). Frontend is a Next.js app on Vercel.
 | [`docs/scaling.md`](docs/scaling.md) | 10× and 100× scaling, and orchestration techniques explored |
 | [`docs/cost.md`](docs/cost.md) | Measured cost per task, fixed monthly cost, bottlenecks |
 
-**Deployed backend**
+**Deployed**
 
 | | |
 |---|---|
+| **Frontend** | **https://deepresearch-web.vercel.app** |
 | API | `https://deepresearch-api-i5hdokk27q-nw.a.run.app` |
 | Worker | `https://deepresearch-worker-i5hdokk27q-nw.a.run.app` (private — Cloud Tasks only) |
 
@@ -397,11 +398,9 @@ which is the question that decides whether a tool like this gets used twice.
 
 Current, and honest.
 
-- **The frontend is not yet deployed to Vercel.** It is built and verified
-  against the deployed backend locally, but the public URL does not exist yet.
 - **The interface has not been reviewed in a browser at every breakpoint.**
-  Types, build and unit tests pass and the data paths are verified end to end,
-  but visual polish is the least-tested surface.
+  It is deployed and verified end to end by driving its own route handlers, but
+  visual polish across viewport sizes is the least-tested surface.
 - **Grounding uses the same model family that wrote the report**, so shared blind
   spots are possible. It also judges against the extracted snippet rather than
   the full document, which is the main source of false negatives.
@@ -441,8 +440,11 @@ Deliberately out of scope, with the alternative noted:
 
 ## Submission
 
+**Deployed frontend** · https://deepresearch-web.vercel.app
 **Deployed backend** · `https://deepresearch-api-i5hdokk27q-nw.a.run.app`
-**Deployed frontend** · pending Vercel project creation
+
+The frontend needs no credentials — it holds the API key server-side. The
+commands below call the backend directly, which does.
 
 **Credentials.** The API requires `BACKEND_API_KEY` in an `X-API-Key` header.
 It is a self-issued token, not the Valyu key, and exists to stop an open endpoint

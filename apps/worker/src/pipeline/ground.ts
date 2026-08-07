@@ -145,23 +145,38 @@ const GROUNDING_SCHEMA: Record<string, unknown> = {
 /** Source text given to the checker per claim. Enough to judge, not enough to blow context. */
 const EVIDENCE_CHARS = 1500;
 
-function buildPrompt(claims: ExtractedClaim[], sources: Source[]): string {
-  const byId = new Map(sources.map((s) => [s.id, s]));
+/**
+ * Builds the grounding prompt with each source's text stated **once**.
+ *
+ * The obvious structure — inline the evidence beneath every claim — repeats a
+ * source's full text for each claim that cites it. A source cited by eight
+ * sentences appeared eight times, which on a 20-source report pushed the prompt
+ * past the 60s model timeout and cost three attempts before giving up. Listing
+ * sources once and having claims reference them by number says the same thing in
+ * a fraction of the tokens.
+ */
+export function buildPrompt(claims: ExtractedClaim[], sources: Source[]): string {
+  const numberById = new Map(sources.map((s, i) => [s.id, i + 1]));
+
+  // Only sources something actually cites; an uncited source is dead weight here.
+  const citedIds = new Set(claims.flatMap((c) => c.citedSourceIds));
+  const evidence = sources
+    .filter((s) => citedIds.has(s.id))
+    .map(
+      (s) =>
+        `[${numberById.get(s.id)}] ${s.title}\n${(s.snippet ?? '(no extracted text)').slice(0, EVIDENCE_CHARS)}`,
+    )
+    .join('\n\n');
 
   const blocks = claims.map((claim, i) => {
-    const evidence = claim.citedSourceIds
-      .map((id) => {
-        const s = byId.get(id);
-        if (!s) return null;
-        return `  SOURCE: ${s.title}\n  ${(s.snippet ?? '(no extracted text)').slice(0, EVIDENCE_CHARS)}`;
-      })
-      .filter(Boolean)
-      .join('\n');
-
-    return `[${i}] CLAIM: ${claim.sentence}\n${evidence}`;
+    const refs = claim.citedSourceIds
+      .map((id) => numberById.get(id))
+      .filter((n): n is number => n !== undefined)
+      .join(', ');
+    return `[${i}] cites source ${refs} — ${claim.sentence}`;
   });
 
-  return `You are checking whether each claim is supported by the source text cited alongside it.
+  return `You are checking whether each claim is supported by the source text it cites.
 
 For each claim, judge ONLY against the source text provided for that claim. Do
 not use outside knowledge. A claim you believe is true but which the provided
@@ -184,7 +199,11 @@ for partial and unsupported verdicts.
 
 Return a verdict for every claim index from 0 to ${claims.length - 1}. JSON only.
 
-${blocks.join('\n\n')}`;
+SOURCE TEXT
+${evidence}
+
+CLAIMS TO CHECK
+${blocks.join('\n')}`;
 }
 
 interface RawGrounding {
@@ -274,6 +293,10 @@ export async function groundReport(opts: GroundingOptions): Promise<GroundingRep
       maxOutputTokens: 16_384,
       thinkingBudget: 4096,
       temperature: 0,
+      // The largest prompt in the pipeline, and the last stage: a slow response
+      // here is worth waiting for, since the alternative is losing the verdicts
+      // on an otherwise finished report.
+      timeoutMs: 120_000,
     });
 
     const grounding = parseGroundingResponse(raw, claims);

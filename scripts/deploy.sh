@@ -46,6 +46,12 @@ TRACE_BUCKET="$(tf_output trace_bucket)"
 
 # Set at deploy time rather than baked in: the Vercel domain is not known until
 # the frontend is deployed, and changing it should not require a rebuild.
+#
+# NOTE: env vars below use gcloud's ^|^ custom-delimiter syntax. The default
+# delimiter is a comma, which silently splits any value containing one -- a
+# comma-separated ALLOWED_ORIGINS is parsed as two variables and rejected.
+# The delimiter must appear in none of the values: '@' is not safe here because
+# TASKS_INVOKER_SA is an email address.
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:3000}"
 
 deploy_worker() {
@@ -61,7 +67,7 @@ deploy_worker() {
     --memory 1Gi \
     --max-instances 5 \
     --timeout "${WORKER_TIMEOUT}s" \
-    --set-env-vars "ROLE=worker,GCP_PROJECT_ID=$PROJECT,GCP_REGION=$REGION,GCS_TRACE_BUCKET=$TRACE_BUCKET,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_PRO_MODEL=gemini-2.5-pro,LEASE_SECONDS=$WORKER_TIMEOUT,FAULT_INJECTION_ENABLED=$FAULT_INJECTION" \
+    --set-env-vars "^|^ROLE=worker|GCP_PROJECT_ID=$PROJECT|GCP_REGION=$REGION|GCS_TRACE_BUCKET=$TRACE_BUCKET|GEMINI_FLASH_MODEL=gemini-3-flash-preview|GEMINI_PRO_MODEL=gemini-2.5-pro|LEASE_SECONDS=$WORKER_TIMEOUT|FAULT_INJECTION_ENABLED=$FAULT_INJECTION" \
     --set-secrets "VALYU_API_KEY=valyu-api-key:latest" \
     --quiet
 
@@ -105,7 +111,7 @@ deploy_api() {
     --min-instances 1 \
     --max-instances 10 \
     --timeout 60s \
-    --set-env-vars "ROLE=api,GCP_PROJECT_ID=$PROJECT,GCP_REGION=$REGION,DISPATCHER=cloudtasks,TASKS_QUEUE=$QUEUE_NAME,WORKER_URL=$WORKER_URL,TASKS_INVOKER_SA=$INVOKER_SA,ALLOWED_ORIGINS=$ALLOWED_ORIGINS" \
+    --set-env-vars "^|^ROLE=api|GCP_PROJECT_ID=$PROJECT|GCP_REGION=$REGION|DISPATCHER=cloudtasks|TASKS_QUEUE=$QUEUE_NAME|WORKER_URL=$WORKER_URL|TASKS_INVOKER_SA=$INVOKER_SA|ALLOWED_ORIGINS=$ALLOWED_ORIGINS" \
     --set-secrets "BACKEND_API_KEY=backend-api-key:latest" \
     --quiet
 
