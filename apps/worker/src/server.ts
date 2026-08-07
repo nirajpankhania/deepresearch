@@ -86,6 +86,11 @@ app.post('/process', async (c) => {
       log: taskLog,
       onProgress: (progress) => tasks.reportProgress(taskId, progress, config.limits.leaseSeconds),
       faultInjectionEnabled: config.faultInjectionEnabled,
+      publish: {
+        queries: (queries) => tasks.publishQueries(taskId, queries, config.limits.leaseSeconds),
+        sources: (sources) => tasks.publishSources(taskId, sources, config.limits.leaseSeconds),
+        draft: (partial) => tasks.publishDraft(taskId, partial, config.limits.leaseSeconds),
+      },
       valyu,
       // Constructed per task, because the call counter is a per-task step limit.
       gemini: new GeminiClient({

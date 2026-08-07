@@ -286,6 +286,7 @@ export async function groundReport(opts: GroundingOptions): Promise<GroundingRep
   try {
     const raw = await gemini.generateJson<RawGrounding>({
       tier: 'flash',
+      stage: 'grounding',
       prompt: buildPrompt(claims, sources),
       responseSchema: GROUNDING_SCHEMA,
       // One batched call over every claim: cheaper and more consistent than a

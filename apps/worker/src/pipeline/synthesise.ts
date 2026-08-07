@@ -183,7 +183,20 @@ export interface SynthesisOptions {
   sources: Source[];
   dateRange?: DateRange;
   log: Logger;
+  /**
+   * Called with the accumulated text as it streams, already throttled.
+   * Optional: without it synthesis simply produces the report in one go.
+   */
+  onDraft?: (partial: string) => Promise<void>;
 }
+
+/**
+ * How often partial text is published while streaming.
+ *
+ * Every chunk would mean a Firestore write per token. Three quarters of a second
+ * reads as continuous to a human and costs ~50 writes across a synthesis.
+ */
+const DRAFT_INTERVAL_MS = 750;
 
 export interface SynthesisResult {
   report: string;
@@ -196,14 +209,26 @@ export async function synthesiseReport(opts: SynthesisOptions): Promise<Synthesi
 
   if (sources.length === 0) throw new Error('cannot synthesise a report with no sources');
 
-  const body = await gemini.generate({
+  const prompt = buildSynthesisPrompt(question, sources, dateRange);
+  let lastPublished = 0;
+
+  const body = await gemini.generateStream({
     tier: 'pro',
-    prompt: buildSynthesisPrompt(question, sources, dateRange),
+    stage: 'synthesising',
+    prompt,
     // Roughly 900 words of prose, plus headroom for reasoning tokens, which
     // count against this budget on the Gemini 3 line.
     maxOutputTokens: 16_384,
     thinkingBudget: 4096,
     temperature: 0.3,
+  }, async (accumulated) => {
+    if (!opts.onDraft) return;
+    const now = Date.now();
+    if (now - lastPublished < DRAFT_INTERVAL_MS) return;
+    lastPublished = now;
+    // A failed publish must not abort generation: the draft is a convenience,
+    // the report is the deliverable.
+    await opts.onDraft(accumulated).catch(() => undefined);
   });
 
   const { report: cleaned, removed } = stripInvalidCitations(body.trim(), sources.length);

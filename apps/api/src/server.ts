@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { isOrphaned, type TaskDispatcher } from '@deepresearch/shared';
+import { streamSSE } from 'hono/streaming';
+import { isOrphaned, isTerminal, type TaskDispatcher } from '@deepresearch/shared';
 import { TaskRepository } from '@deepresearch/shared/firestore';
 import { createLogger } from '@deepresearch/shared/logger';
 
@@ -115,6 +116,79 @@ app.get('/tasks/:task_id', async (c) => {
   }
 
   return c.json(task);
+});
+
+/**
+ * Server-sent events for a single task.
+ *
+ * The listener lives here rather than in the Vercel route handler for a specific
+ * reason: watching Firestore needs Google credentials, and putting a service
+ * account key in Vercel would add a third secret and the system's only
+ * long-lived key file. This service already has Firestore access through its own
+ * service account, so the frontend proxies the stream instead of opening one.
+ *
+ * Terminates on a terminal status. Heartbeats keep intermediaries from closing
+ * an idle connection during the long quiet stretch of synthesis.
+ */
+app.get('/tasks/:task_id/stream', async (c) => {
+  const id = c.req.param('task_id');
+
+  const initial = await tasks.get(id);
+  if (!initial) return c.json({ error: 'Task not found' }, 404);
+
+  return streamSSE(c, async (stream) => {
+    let unsubscribe: (() => void) | null = null;
+    let settled = false;
+
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+    };
+
+    // Firestore delivers the current document immediately on subscribe, so the
+    // client gets full state without a separate fetch.
+    await new Promise<void>((resolve) => {
+      stream.onAbort(() => {
+        finish();
+        resolve();
+      });
+
+      unsubscribe = tasks.watch(
+        id,
+        (task) => {
+          void stream
+            .writeSSE({ event: 'task', data: JSON.stringify(task) })
+            .then(() => {
+              if (isTerminal(task.status)) {
+                finish();
+                resolve();
+              }
+            })
+            .catch(() => {
+              finish();
+              resolve();
+            });
+        },
+        (err) => {
+          log.error('task stream failed', { taskId: id, reason: err.message });
+          finish();
+          resolve();
+        },
+      );
+
+      // A comment line is a valid SSE no-op; EventSource ignores it.
+      const heartbeat = setInterval(() => {
+        void stream.writeSSE({ event: 'ping', data: '' }).catch(() => {
+          clearInterval(heartbeat);
+          finish();
+          resolve();
+        });
+      }, 15_000);
+
+      stream.onAbort(() => clearInterval(heartbeat));
+    });
+  });
 });
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {

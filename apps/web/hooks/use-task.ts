@@ -4,105 +4,167 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isTerminal, type Task } from '@deepresearch/shared';
 
 /**
- * Polls a task until it reaches a terminal state.
+ * Follows a task to completion, by event stream where possible and by polling
+ * where not.
  *
- * Polling rather than SSE. A research task runs for a minute or two, so an open
- * connection buys little: it would have to survive a Vercel function timeout and
- * a dropped connection would need reconnection logic anyway. Polling degrades
- * gracefully — a failed poll is retried on the next tick and the user sees
- * nothing — and costs one small request every couple of seconds.
+ * SSE is the primary path: the backend watches Firestore and pushes every
+ * change, so sub-queries appear as they are planned and the report arrives as it
+ * is written rather than in two-second jumps.
  *
- * The interval widens after the first minute because a task still running then
- * is usually in synthesis, which takes tens of seconds and produces no
- * intermediate progress worth the extra requests.
+ * Polling is a real fallback, not dead code. The proxying function has a
+ * duration limit shorter than a long task, corporate proxies sometimes strip
+ * event streams, and the connection can simply drop. Repeated stream failures
+ * fall back to polling permanently for that task, so a degraded network costs
+ * smoothness rather than the feature.
  */
 
 const FAST_INTERVAL_MS = 2000;
 const SLOW_INTERVAL_MS = 5000;
 const SLOW_AFTER_MS = 60_000;
 
+/** Consecutive stream failures before abandoning SSE for this task. */
+const MAX_STREAM_FAILURES = 3;
+
+export type Transport = 'stream' | 'poll' | 'idle';
+
 export interface TaskState {
   task: Task | null;
-  /** Set only when the task itself could not be loaded, not when it failed. */
+  /** Set only when the task could not be loaded, never when the task itself failed. */
   loadError: string | null;
-  isPolling: boolean;
+  isFollowing: boolean;
+  transport: Transport;
 }
 
 export function useTask(taskId: string | null): TaskState {
   const [task, setTask] = useState<Task | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [transport, setTransport] = useState<Transport>('idle');
 
-  const startedAt = useRef<number>(Date.now());
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Consecutive failures, so a blip does not surface as an error to the user.
-  const failures = useRef(0);
+  const startedAt = useRef(Date.now());
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const source = useRef<EventSource | null>(null);
+  const streamFailures = useRef(0);
+  const pollFailures = useRef(0);
 
-  const clear = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
+  const apply = useCallback((next: Task): boolean => {
+    setTask(next);
+    setLoadError(null);
+    return isTerminal(next.status);
   }, []);
 
   useEffect(() => {
     setTask(null);
     setLoadError(null);
-    failures.current = 0;
+    streamFailures.current = 0;
+    pollFailures.current = 0;
     startedAt.current = Date.now();
 
     if (!taskId) {
-      setIsPolling(false);
+      setIsFollowing(false);
+      setTransport('idle');
       return;
     }
 
     let cancelled = false;
-    setIsPolling(true);
+    setIsFollowing(true);
 
+    const stop = (): void => {
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+      source.current?.close();
+      source.current = null;
+    };
+
+    // --- polling fallback ---------------------------------------------------
     const poll = async (): Promise<void> => {
+      if (cancelled) return;
       try {
         const response = await fetch(`/api/tasks/${taskId}`, { cache: 'no-store' });
-
         if (!response.ok) {
           const body = (await response.json().catch(() => null)) as { error?: string } | null;
           throw new Error(body?.error ?? 'Could not load this task.');
         }
-
         const next = (await response.json()) as Task;
         if (cancelled) return;
 
-        failures.current = 0;
-        setTask(next);
-        setLoadError(null);
-
-        if (isTerminal(next.status)) {
-          setIsPolling(false);
+        pollFailures.current = 0;
+        if (apply(next)) {
+          setIsFollowing(false);
           return;
         }
       } catch (err: unknown) {
         if (cancelled) return;
-        failures.current += 1;
-
-        // Two consecutive failures before saying anything: a single dropped
-        // request is normal and showing an error for it would be noise.
-        if (failures.current >= 2) {
+        pollFailures.current += 1;
+        // One dropped request is normal; saying so immediately would be noise.
+        if (pollFailures.current >= 2) {
           setLoadError(err instanceof Error ? err.message : 'Could not load this task.');
         }
       }
 
       if (cancelled) return;
       const elapsed = Date.now() - startedAt.current;
-      timer.current = setTimeout(
+      pollTimer.current = setTimeout(
         () => void poll(),
         elapsed > SLOW_AFTER_MS ? SLOW_INTERVAL_MS : FAST_INTERVAL_MS,
       );
     };
 
-    void poll();
+    const startPolling = (): void => {
+      if (cancelled) return;
+      setTransport('poll');
+      void poll();
+    };
+
+    // --- event stream -------------------------------------------------------
+    const startStream = (): void => {
+      if (cancelled) return;
+
+      // EventSource is same-origin here: it hits this app's route handler, which
+      // holds the credential and proxies upstream.
+      const es = new EventSource(`/api/tasks/${taskId}/stream`);
+      source.current = es;
+      setTransport('stream');
+
+      es.addEventListener('task', (event) => {
+        if (cancelled) return;
+        try {
+          const next = JSON.parse((event as MessageEvent<string>).data) as Task;
+          streamFailures.current = 0;
+          if (apply(next)) {
+            setIsFollowing(false);
+            stop();
+          }
+        } catch {
+          // A malformed frame is not worth tearing the connection down for.
+        }
+      });
+
+      es.onerror = () => {
+        if (cancelled) return;
+        es.close();
+        source.current = null;
+        streamFailures.current += 1;
+
+        // The proxy's duration limit closes the connection mid-task, so a
+        // reconnect is the expected case rather than an error. Only repeated
+        // failures mean the stream is genuinely unavailable.
+        if (streamFailures.current >= MAX_STREAM_FAILURES) {
+          startPolling();
+          return;
+        }
+        setTimeout(() => startStream(), 1000);
+      };
+    };
+
+    if (typeof EventSource === 'undefined') startPolling();
+    else startStream();
 
     return () => {
       cancelled = true;
-      clear();
+      stop();
     };
-  }, [taskId, clear]);
+  }, [taskId, apply]);
 
-  return { task, loadError, isPolling };
+  return { task, loadError, isFollowing, transport };
 }

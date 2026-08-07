@@ -31,6 +31,11 @@ WORKER_TIMEOUT=900
 # reliably. Gated behind the API key like every other endpoint.
 FAULT_INJECTION="${FAULT_INJECTION_ENABLED:-true}"
 
+# The API's request timeout has to outlast an SSE connection held open for a
+# whole task. Ordinary requests finish in milliseconds; this ceiling only
+# affects GET /tasks/:id/stream.
+API_TIMEOUT=300
+
 cd "$REPO_ROOT"
 
 tf_output() {
@@ -110,7 +115,7 @@ deploy_api() {
     --memory 512Mi \
     --min-instances 1 \
     --max-instances 10 \
-    --timeout 60s \
+    --timeout "${API_TIMEOUT}s" \
     --set-env-vars "^|^ROLE=api|GCP_PROJECT_ID=$PROJECT|GCP_REGION=$REGION|DISPATCHER=cloudtasks|TASKS_QUEUE=$QUEUE_NAME|WORKER_URL=$WORKER_URL|TASKS_INVOKER_SA=$INVOKER_SA|ALLOWED_ORIGINS=$ALLOWED_ORIGINS" \
     --set-secrets "BACKEND_API_KEY=backend-api-key:latest" \
     --quiet

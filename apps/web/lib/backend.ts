@@ -78,3 +78,20 @@ export function createTask(body: CreateTaskRequest): Promise<CreateTaskResponse>
 export function getTask(taskId: string): Promise<Task> {
   return request<Task>(`/tasks/${encodeURIComponent(taskId)}`);
 }
+
+/**
+ * Opens the upstream event stream, for the route handler to pipe to the browser.
+ *
+ * No timeout here, unlike every other call: the whole point is a connection held
+ * open for the life of the task. It is bounded instead by the caller's abort
+ * signal and by the platform's function duration limit.
+ */
+export async function openTaskStream(taskId: string, signal: AbortSignal): Promise<Response> {
+  const { url, key } = config();
+
+  return fetch(`${url}/tasks/${encodeURIComponent(taskId)}/stream`, {
+    headers: { Accept: 'text/event-stream', 'X-API-Key': key },
+    cache: 'no-store',
+    signal,
+  });
+}

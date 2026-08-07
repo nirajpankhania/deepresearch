@@ -10,7 +10,12 @@
  * this as `@deepresearch/shared/firestore`.
  */
 
-import { Firestore, Timestamp, type DocumentSnapshot } from '@google-cloud/firestore';
+import {
+  FieldValue,
+  Firestore,
+  Timestamp,
+  type DocumentSnapshot,
+} from '@google-cloud/firestore';
 
 import type {
   CostRecord,
@@ -44,6 +49,7 @@ interface TaskDoc {
   sources: Source[];
   cost: CostRecord;
   report?: string;
+  reportDraft?: string;
   grounding?: GroundingReport;
   error?: TaskError;
   tracePath?: string;
@@ -71,6 +77,7 @@ function toTask(snap: DocumentSnapshot): Task | null {
 
   if (d.dateRange) task.dateRange = d.dateRange;
   if (d.report !== undefined) task.report = d.report;
+  if (d.reportDraft !== undefined) task.reportDraft = d.reportDraft;
   if (d.grounding) task.grounding = d.grounding;
   if (d.error) task.error = d.error;
   if (d.tracePath) task.tracePath = d.tracePath;
@@ -170,6 +177,86 @@ export class TaskRepository {
     });
   }
 
+  /**
+   * Publish the planned sub-queries as soon as they exist, rather than at the
+   * end with the report.
+   *
+   * The queries are the most interesting thing happening during the two minutes
+   * a task runs, and holding them back until completion meant the "what was
+   * searched" panel sat empty for the whole time — the user could see *that*
+   * something was happening but not *what*.
+   */
+  async publishQueries(id: string, queries: PlannedQuery[], leaseSeconds: number): Promise<void> {
+    const now = Timestamp.now();
+    await this.db
+      .collection(COLLECTION)
+      .doc(id)
+      .update({
+        queries,
+        updatedAt: now,
+        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+      });
+  }
+
+  /**
+   * Publish the selected corpus once reranking has chosen it.
+   *
+   * Written before synthesis rather than with the report, so the source cards
+   * and the citation targets exist while the report is still streaming — a
+   * citation appearing in draft text should resolve immediately, not forty
+   * seconds later.
+   */
+  async publishSources(id: string, sources: Source[], leaseSeconds: number): Promise<void> {
+    const now = Timestamp.now();
+    await this.db
+      .collection(COLLECTION)
+      .doc(id)
+      .update({
+        sources,
+        updatedAt: now,
+        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+      });
+  }
+
+  /**
+   * Publish partial report text while synthesis streams.
+   *
+   * Written to `reportDraft`, never `report`: only the latter is a finished
+   * document, and a draft abandoned by a failed attempt must not be readable as
+   * a completed report.
+   */
+  async publishDraft(id: string, reportDraft: string, leaseSeconds: number): Promise<void> {
+    const now = Timestamp.now();
+    await this.db
+      .collection(COLLECTION)
+      .doc(id)
+      .update({
+        reportDraft,
+        updatedAt: now,
+        leaseExpiresAt: Timestamp.fromMillis(now.toMillis() + leaseSeconds * 1000),
+      });
+  }
+
+  /**
+   * Streams every change to a task until it reaches a terminal state.
+   *
+   * Backs the SSE endpoint. Returns an unsubscribe function the caller must
+   * invoke when the client disconnects, or the listener outlives the request and
+   * leaks for as long as the instance survives.
+   */
+  watch(id: string, onChange: (task: Task) => void, onError: (err: Error) => void): () => void {
+    return this.db
+      .collection(COLLECTION)
+      .doc(id)
+      .onSnapshot(
+        (snap) => {
+          const task = toTask(snap);
+          if (task) onChange(task);
+        },
+        (err) => onError(err instanceof Error ? err : new Error(String(err))),
+      );
+  }
+
   /** Report progress and extend the lease, so a long but healthy task is not reclaimed. */
   async reportProgress(id: string, progress: Progress, leaseSeconds: number): Promise<void> {
     const now = Timestamp.now();
@@ -220,6 +307,9 @@ export class TaskRepository {
       tx.update(ref, {
         status: 'completed',
         report: result.report,
+        // The finished report supersedes the draft; leaving both would let a
+        // stale partial render alongside the real thing.
+        reportDraft: FieldValue.delete(),
         queries: result.queries,
         sources: result.sources,
         cost: result.cost,

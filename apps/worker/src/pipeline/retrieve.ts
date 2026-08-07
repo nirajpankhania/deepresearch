@@ -21,6 +21,11 @@ export interface RetrievalOptions {
   relevanceThreshold: number;
   dateRange?: DateRange;
   log: Logger;
+  /**
+   * Called whenever a sub-query's outcome changes, so the interface can tick
+   * searches off as they land rather than showing nothing until all finish.
+   */
+  onQueriesChanged?: (queries: PlannedQuery[]) => Promise<void>;
 }
 
 export interface RetrievalOutcome {
@@ -55,7 +60,10 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
         remainingUsd: budget.remaining(),
       });
       const target = queries[index];
-      if (target) target.error = 'Skipped: per-task retrieval budget reached';
+      if (target) {
+        target.error = 'Skipped: per-task retrieval budget reached';
+        target.done = true;
+      }
       return [];
     }
     return [{ query, index, estimate }];
@@ -74,11 +82,29 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
         });
 
         budget.settle(estimate, outcome.costUsd, outcome.txId);
+
+        // Publish this facet's outcome immediately rather than waiting for the
+        // slowest search: the point of showing queries live is lost if they all
+        // appear at once at the end.
+        const target = queries[index];
+        if (target) {
+          target.resultCount = outcome.results.length;
+          target.costUsd = outcome.costUsd;
+          target.done = true;
+        }
+        await opts.onQueriesChanged?.(queries).catch(() => undefined);
+
         return { index, results: outcome.results };
       } catch (err: unknown) {
         // Release the reservation so a failed call does not permanently consume
         // headroom that other facets could have used.
         budget.settle(estimate, 0);
+        const target = queries[index];
+        if (target) {
+          target.error = 'This search failed and its results are missing from the report';
+          target.done = true;
+        }
+        await opts.onQueriesChanged?.(queries).catch(() => undefined);
         throw Object.assign(err instanceof Error ? err : new Error(String(err)), { index });
       }
     }),
@@ -89,20 +115,13 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
   for (const result of settled) {
     if (result.status === 'fulfilled') {
       const { index, results } = result.value;
-      const target = queries[index];
-      if (target) target.resultCount = results.length;
       for (const r of results) sources.push(toSource(r, index));
       continue;
     }
 
+    // Already recorded on the query above, so the interface can show which facet
+    // was lost rather than silently presenting a thinner report as if complete.
     const err = result.reason as Error & { index?: number };
-    const target = err.index !== undefined ? queries[err.index] : undefined;
-    if (target) {
-      // Recorded on the query so the interface can show which facet was lost,
-      // rather than silently presenting a thinner report as if complete.
-      target.error = 'This search failed and its results are missing from the report';
-      target.resultCount = 0;
-    }
     log.error('search failed', { reason: err.message, queryIndex: err.index });
   }
 

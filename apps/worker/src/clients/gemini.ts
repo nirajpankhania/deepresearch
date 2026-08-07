@@ -1,6 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
 import type { Logger } from '@deepresearch/shared/logger';
 
+import type { ModelCall } from '@deepresearch/shared';
+
+import { priceCall } from './pricing.js';
 import { callWithRetry } from './resilience.js';
 
 /**
@@ -37,6 +40,8 @@ export interface GeminiOptions {
 
 export interface GenerateParams {
   tier: ModelTier;
+  /** Which pipeline stage this call belongs to, for the cost breakdown. */
+  stage: ModelCall['stage'];
   prompt: string;
   /**
    * Bounds the response, and with it the cost of a runaway generation.
@@ -63,6 +68,7 @@ const ATTEMPTS = 3;
 export class GeminiClient {
   private readonly ai: GoogleGenAI;
   private calls = 0;
+  private readonly usage: ModelCall[] = [];
 
   constructor(private readonly opts: GeminiOptions) {
     this.ai = new GoogleGenAI({
@@ -75,6 +81,12 @@ export class GeminiClient {
   /** Model calls consumed so far, for the trace and for progress reporting. */
   get callCount(): number {
     return this.calls;
+  }
+
+  /** Per-call token usage and estimated cost, for the task's cost breakdown. */
+  get modelUsage(): { estimatedUsd: number; calls: ModelCall[] } {
+    const estimatedUsd = this.usage.reduce((sum, c) => sum + c.estimatedUsd, 0);
+    return { estimatedUsd: Math.round(estimatedUsd * 1e6) / 1e6, calls: [...this.usage] };
   }
 
   private modelFor(tier: ModelTier): string {
@@ -118,14 +130,37 @@ export class GeminiClient {
     );
 
     const text = response.text ?? '';
+    const durationMs = Date.now() - started;
+
+    // Token counts come from the API rather than being derived from characters,
+    // which is what makes the cost breakdown worth showing at all.
+    const usage = response.usageMetadata;
+    const promptTokens = usage?.promptTokenCount ?? 0;
+    const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const thoughtTokens = usage?.thoughtsTokenCount ?? 0;
+
+    const record: ModelCall = {
+      stage: params.stage,
+      tier: params.tier,
+      model,
+      promptTokens,
+      outputTokens,
+      thoughtTokens,
+      estimatedUsd: priceCall(model, promptTokens, outputTokens, thoughtTokens),
+      durationMs,
+    };
+    this.usage.push(record);
 
     this.opts.log.info('gemini call complete', {
       model,
       tier: params.tier,
+      stage: params.stage,
       call: this.calls,
-      promptChars: params.prompt.length,
-      responseChars: text.length,
-      durationMs: Date.now() - started,
+      promptTokens,
+      outputTokens,
+      thoughtTokens,
+      estimatedUsd: record.estimatedUsd,
+      durationMs,
     });
 
     const finishReason = response.candidates?.[0]?.finishReason;
@@ -144,6 +179,92 @@ export class GeminiClient {
     }
 
     return text;
+  }
+
+  /**
+   * Generate, delivering text as it arrives.
+   *
+   * Used only for synthesis, the one call long enough that watching it write is
+   * meaningfully better than waiting forty seconds for it to appear.
+   *
+   * Deliberately not retried. A retry would restart generation from nothing
+   * after the reader has already seen half a report, and the resulting jump
+   * backwards is worse than the failure. The stage is non-fatal to the pipeline
+   * in the same way the rest are — the caller decides.
+   */
+  async generateStream(
+    params: GenerateParams,
+    onText: (accumulated: string) => void | Promise<void>,
+  ): Promise<string> {
+    if (this.calls >= this.opts.maxCalls) {
+      throw new ModelCallLimitError(this.opts.maxCalls);
+    }
+    this.calls += 1;
+
+    const model = this.modelFor(params.tier);
+    const started = Date.now();
+
+    const stream = await this.ai.models.generateContentStream({
+      model,
+      contents: params.prompt,
+      config: {
+        maxOutputTokens: params.maxOutputTokens,
+        temperature: params.temperature ?? 0.2,
+        ...(params.thinkingBudget !== undefined
+          ? { thinkingConfig: { thinkingBudget: params.thinkingBudget } }
+          : {}),
+      },
+    });
+
+    let accumulated = '';
+    let promptTokens = 0;
+    let outputTokens = 0;
+    let thoughtTokens = 0;
+
+    for await (const chunk of stream) {
+      const text = chunk.text ?? '';
+      if (text !== '') {
+        accumulated += text;
+        await onText(accumulated);
+      }
+      // Usage arrives on the final chunks; keep the latest non-zero figures.
+      const usage = chunk.usageMetadata;
+      if (usage) {
+        promptTokens = usage.promptTokenCount ?? promptTokens;
+        outputTokens = usage.candidatesTokenCount ?? outputTokens;
+        thoughtTokens = usage.thoughtsTokenCount ?? thoughtTokens;
+      }
+    }
+
+    const durationMs = Date.now() - started;
+    const record: ModelCall = {
+      stage: params.stage,
+      tier: params.tier,
+      model,
+      promptTokens,
+      outputTokens,
+      thoughtTokens,
+      estimatedUsd: priceCall(model, promptTokens, outputTokens, thoughtTokens),
+      durationMs,
+    };
+    this.usage.push(record);
+
+    this.opts.log.info('gemini stream complete', {
+      model,
+      tier: params.tier,
+      stage: params.stage,
+      promptTokens,
+      outputTokens,
+      thoughtTokens,
+      estimatedUsd: record.estimatedUsd,
+      durationMs,
+    });
+
+    if (accumulated.trim() === '') {
+      throw new Error(`model ${model} streamed an empty response`);
+    }
+
+    return accumulated;
   }
 
   /**

@@ -1,6 +1,6 @@
 import type { CompletionResult } from '@deepresearch/shared/firestore';
 import type { Logger } from '@deepresearch/shared/logger';
-import type { Progress, Source, Task } from '@deepresearch/shared';
+import type { PlannedQuery, Progress, Source, Task } from '@deepresearch/shared';
 
 import { FORCE_FAILURE_SENTINEL } from '../config.js';
 import type { GeminiClient } from '../clients/gemini.js';
@@ -20,6 +20,12 @@ export interface PipelineContext {
   onProgress: (progress: Progress) => Promise<void>;
   /** When true, the force-failure sentinel in a question is honoured. */
   faultInjectionEnabled: boolean;
+  /** Publishes intermediate state so the interface can show work as it happens. */
+  publish: {
+    queries: (queries: PlannedQuery[]) => Promise<void>;
+    sources: (sources: Source[]) => Promise<void>;
+    draft: (partial: string) => Promise<void>;
+  };
   valyu: ValyuClient;
   gemini: GeminiClient;
   limits: {
@@ -58,6 +64,11 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
   // --- Stage 1: plan --------------------------------------------------------
   await onProgress({ step: 'planning', message: 'Planning sub-queries', pct: 10 });
   const planned = await planQueries(gemini, task.question, task.dateRange);
+
+  // Published before retrieval starts, so the sub-queries are visible while they
+  // are being searched rather than only in the finished report.
+  await ctx.publish.queries(planned).catch(() => undefined);
+
   log.info('plan complete', {
     queryCount: planned.length,
     sources: planned.map((q) => q.includedSources),
@@ -76,6 +87,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     maxResults: limits.maxResultsPerQuery,
     relevanceThreshold: limits.relevanceThreshold,
     log,
+    onQueriesChanged: ctx.publish.queries,
     ...(task.dateRange ? { dateRange: task.dateRange } : {}),
   });
 
@@ -101,6 +113,10 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     log,
   });
 
+  // Published before synthesis so citations in the streaming draft resolve to
+  // real source cards immediately.
+  await ctx.publish.sources(selected).catch(() => undefined);
+
   // --- Stage 5: synthesise --------------------------------------------------
   await onProgress({
     step: 'synthesising',
@@ -112,6 +128,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     question: task.question,
     sources: selected,
     log,
+    onDraft: ctx.publish.draft,
     ...(task.dateRange ? { dateRange: task.dateRange } : {}),
   });
 
@@ -138,7 +155,9 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     report: synthesis.report,
     queries,
     sources: selected,
-    cost: budget.record(),
+    // Measured retrieval spend, plus estimated model spend kept separate so the
+    // two are never presented as equally trustworthy.
+    cost: { ...budget.record(), model: gemini.modelUsage },
     // Absent rather than empty when grounding could not run, so the interface
     // can distinguish "not checked" from "checked and found nothing".
     ...(grounding ? { grounding } : {}),

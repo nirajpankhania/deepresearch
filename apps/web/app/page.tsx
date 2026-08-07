@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { CostPanel } from '@/components/cost-panel';
 import { Grounding } from '@/components/grounding';
 import { Report } from '@/components/report';
 import { SearchPanel } from '@/components/search-panel';
@@ -35,20 +36,22 @@ function load(): Submitted[] {
 export default function Home() {
   const [tasks, setTasks] = useState<Submitted[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const stored = load();
     setTasks(stored);
     setSelected(stored[0]?.id ?? null);
+    setComposing(stored.length === 0);
     setHydrated(true);
   }, []);
 
-  const { task, loadError, isPolling } = useTask(selected);
+  const { task, loadError, transport } = useTask(selected);
 
   const onCreated = useCallback((id: string, question: string) => {
     setTasks((previous) => {
-      const next = [{ id, question, at: new Date().toISOString() }, ...previous].slice(0, 20);
+      const next = [{ id, question, at: new Date().toISOString() }, ...previous].slice(0, 30);
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch {
@@ -57,7 +60,11 @@ export default function Home() {
       return next;
     });
     setSelected(id);
+    setComposing(false);
   }, []);
+
+  const live = task?.status === 'running' || task?.status === 'queued';
+  const streamingReport = task?.status === 'running' && Boolean(task.reportDraft);
 
   return (
     <div className="shell">
@@ -71,9 +78,55 @@ export default function Home() {
       </header>
 
       <div className="columns">
+        {/* Own scroll context, so switching reports never means scrolling past one. */}
+        <aside className="sidebar">
+          <button
+            type="button"
+            className="new-task"
+            onClick={() => {
+              setComposing(true);
+              setSelected(null);
+            }}
+          >
+            + New question
+          </button>
+
+          {tasks.length > 0 ? (
+            <>
+              <h2 className="sidebar-title">Your questions</h2>
+              <ul className="task-list">
+                {tasks.map((t) => (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className="task-item"
+                      aria-current={t.id === selected}
+                      onClick={() => {
+                        setSelected(t.id);
+                        setComposing(false);
+                      }}
+                    >
+                      <q>{t.question}</q>
+                      <span className="hint">
+                        {new Date(t.at).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {t.id === selected && live ? ' · running' : ''}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </aside>
+
         <main>
-          {!hydrated ? null : !selected ? (
-            <p className="empty">Ask a question to begin. Reports usually take a minute or two.</p>
+          {!hydrated ? null : composing || !selected ? (
+            <SubmitForm onCreated={onCreated} />
           ) : loadError && !task ? (
             <div className="notice notice-error" role="alert">
               <h3>Could not load this task</h3>
@@ -98,12 +151,18 @@ export default function Home() {
 
                 {task.dateRange?.start || task.dateRange?.end ? (
                   <p className="hint" style={{ marginTop: '0.5rem' }}>
-                    Restricted to {task.dateRange.start ?? 'any date'} → {task.dateRange.end ?? 'today'}
+                    Restricted to {task.dateRange.start ?? 'any date'} →{' '}
+                    {task.dateRange.end ?? 'today'}
                   </p>
                 ) : null}
 
-                {task.status === 'queued' || task.status === 'running' ? (
-                  <Progress task={task} />
+                {live ? (
+                  <>
+                    <Progress task={task} />
+                    <p className="transport" style={{ marginTop: '0.6rem' }}>
+                      {transport === 'stream' ? 'live updates' : 'polling for updates'}
+                    </p>
+                  </>
                 ) : null}
               </section>
 
@@ -125,6 +184,15 @@ export default function Home() {
                 </div>
               ) : null}
 
+              {task.queries.length > 0 ? <SearchPanel task={task} /> : null}
+
+              {/* The report as it is written, then the finished document. */}
+              {streamingReport && task.reportDraft ? (
+                <div style={{ marginTop: '2rem' }}>
+                  <Report report={task.reportDraft} sources={task.sources} streaming />
+                </div>
+              ) : null}
+
               {task.status === 'completed' && task.report ? (
                 <div style={{ marginTop: '2rem' }}>
                   <Report report={task.report} sources={task.sources} />
@@ -133,44 +201,13 @@ export default function Home() {
                   ) : null}
                 </div>
               ) : null}
+
+              {task.queries.length > 0 ? (
+                <CostPanel cost={task.cost} queries={task.queries} />
+              ) : null}
             </>
           )}
         </main>
-
-        <aside className="rail">
-          <SubmitForm onCreated={onCreated} />
-
-          {task && task.queries.length > 0 ? <SearchPanel task={task} /> : null}
-
-          {tasks.length > 0 ? (
-            <section className="card">
-              <h2 className="card-title">Your tasks</h2>
-              <ul className="task-list">
-                {tasks.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className="task-item"
-                      aria-current={t.id === selected}
-                      onClick={() => setSelected(t.id)}
-                    >
-                      <q>{t.question}</q>
-                      <span className="hint">
-                        {new Date(t.at).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                        {t.id === selected && isPolling ? ' · updating' : ''}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </aside>
       </div>
     </div>
   );

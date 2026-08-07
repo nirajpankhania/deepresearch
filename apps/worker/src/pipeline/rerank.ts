@@ -122,6 +122,7 @@ export async function rerankSources(opts: RerankOptions): Promise<Source[]> {
   try {
     const raw = await gemini.generateJson<RawScores>({
       tier: 'flash',
+      stage: 'reranking',
       prompt: buildPrompt(question, sources),
       responseSchema: RERANK_SCHEMA,
       // Covers reasoning tokens as well as output on the Gemini 3 line, and the

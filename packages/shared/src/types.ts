@@ -64,6 +64,10 @@ export interface PlannedQuery {
   rationale: string;
   /** Results returned after Valyu's own relevance threshold. Set post-retrieval. */
   resultCount: number;
+  /** Measured spend for this sub-query, from its search response. */
+  costUsd?: number;
+  /** Set once this sub-query's search has returned, so the UI can tick them off live. */
+  done?: boolean;
   /** Present when the search failed; the task continues without these results. */
   error?: string;
 }
@@ -128,15 +132,41 @@ export interface MergedAlternate {
   mergedBy: 'doi' | 'arxivId' | 'pmid' | 'pmcId' | 'nctId' | 'url' | 'title-author';
 }
 
+/** One model call, priced. Token counts are reported by the API, not derived. */
+export interface ModelCall {
+  stage: 'planning' | 'reranking' | 'synthesising' | 'grounding';
+  tier: 'flash' | 'pro';
+  model: string;
+  promptTokens: number;
+  outputTokens: number;
+  /**
+   * Reasoning tokens. Billed as output and invisible in the response, which is
+   * what makes them the least obvious term in the bill — so they are reported
+   * separately rather than folded into output.
+   */
+  thoughtTokens: number;
+  /** Estimated from published list prices. Unlike retrieval, this is not measured. */
+  estimatedUsd: number;
+  durationMs: number;
+}
+
 /**
- * Measured retrieval spend. `totalUsd` is summed from Valyu's reported
- * `total_deduction_dollars`, never estimated; `txIds` is the audit trail.
+ * Task spend.
+ *
+ * `totalUsd` is **measured** retrieval spend, summed from Valyu's reported
+ * `total_deduction_dollars`; `txIds` is the audit trail that makes it checkable
+ * against Valyu's billing. Model spend is *estimated* from token counts against
+ * list prices, and is kept in a separate field so the two are never confused.
  */
 export interface CostRecord {
   totalUsd: number;
   txIds: string[];
   /** Set when the per-task cap stopped further searches. */
   cappedAt?: number;
+  model?: {
+    estimatedUsd: number;
+    calls: ModelCall[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +231,13 @@ export interface Task {
 
   /** Markdown with inline `[n]` citations. Present once completed. */
   report?: string;
+  /**
+   * Partial report text while synthesis is streaming.
+   *
+   * Deliberately separate from `report`: only `report` is a finished document.
+   * A draft left behind by a failed attempt must never be mistaken for one.
+   */
+  reportDraft?: string;
   grounding?: GroundingReport;
   error?: TaskError;
   /** `gs://` path to the raw retrieval trace. */

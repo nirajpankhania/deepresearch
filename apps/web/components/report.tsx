@@ -43,12 +43,21 @@ export function splitReport(markdown: string): string {
   return index === -1 ? markdown : markdown.slice(0, index).trimEnd();
 }
 
-export function Report({ report, sources }: { report: string; sources: Source[] }) {
+export function Report({
+  report,
+  sources,
+  streaming = false,
+}: {
+  report: string;
+  sources: Source[];
+  /** True while the text is still arriving, which shows a caret and hides the source list. */
+  streaming?: boolean;
+}) {
   const body = linkCitations(splitReport(report), sources.length);
 
   return (
     <>
-      <div className="report">
+      <div className={`report${streaming ? ' streaming' : ''}`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -78,16 +87,21 @@ export function Report({ report, sources }: { report: string; sources: Source[] 
         </ReactMarkdown>
       </div>
 
-      <section aria-labelledby="sources-title" style={{ marginTop: '2.5rem' }}>
-        <h2 className="card-title" id="sources-title">
-          Sources · {sources.length}
-        </h2>
-        <div className="sources">
-          {sources.map((source, i) => (
-            <SourceCard key={source.id} source={source} index={i + 1} />
-          ))}
-        </div>
-      </section>
+      {sources.length > 0 ? (
+        <details className="panel" open={!streaming}>
+          <summary>
+            Sources
+            <span className="panel-count">{sources.length}</span>
+          </summary>
+          <div className="panel-body">
+            <div className="sources">
+              {sources.map((source, i) => (
+                <SourceCard key={source.id} source={source} index={i + 1} />
+              ))}
+            </div>
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }

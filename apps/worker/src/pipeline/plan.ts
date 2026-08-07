@@ -167,6 +167,7 @@ export async function planQueries(
 ): Promise<PlannedQuery[]> {
   const raw = await gemini.generateJson<RawPlan>({
     tier: 'flash',
+    stage: 'planning',
     prompt: buildPlanPrompt(question, dateRange),
     responseSchema: PLAN_SCHEMA,
     // Generous, because this budget covers reasoning tokens too. The planning
