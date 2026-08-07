@@ -3,7 +3,7 @@ import type { Logger } from '@deepresearch/shared/logger';
 
 import { TaskGoneError } from '@deepresearch/shared/firestore';
 
-import type { ValyuClient } from '../clients/valyu.js';
+import type { SearchResult, ValyuClient } from '../clients/valyu.js';
 import type { BudgetLedger } from './budget.js';
 import { estimateSearchCost, toSource } from './sources.js';
 import { widenSources } from './widen.js';
@@ -36,6 +36,8 @@ export interface RetrievalOutcome {
   queries: PlannedQuery[];
   /** Mapped sources, before deduplication. */
   sources: Source[];
+  /** Raw responses per sub-query, kept for the trace written to Cloud Storage. */
+  raw: { queryIndex: number; query: string; results: SearchResult[] }[];
 }
 
 export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOutcome> {
@@ -123,10 +125,12 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
   );
 
   const sources: Source[] = [];
+  const raw: RetrievalOutcome['raw'] = [];
 
   for (const result of settled) {
     if (result.status === 'fulfilled') {
       const { index, results } = result.value;
+      raw.push({ queryIndex: index, query: queries[index]?.query ?? '', results });
       for (const r of results) sources.push(toSource(r, index));
       continue;
     }
@@ -144,5 +148,5 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
     costUsd: budget.record().totalUsd,
   });
 
-  return { queries, sources };
+  return { queries, sources, raw };
 }

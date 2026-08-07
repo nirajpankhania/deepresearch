@@ -17,6 +17,7 @@ function ignoreUnlessGone(err: unknown): never | undefined {
   return undefined;
 }
 import type { GeminiClient } from '../clients/gemini.js';
+import type { TraceStore } from '../clients/gcs.js';
 import type { ValyuClient } from '../clients/valyu.js';
 import { BudgetLedger } from './budget.js';
 import { dedupeSources } from './dedup.js';
@@ -41,6 +42,7 @@ export interface PipelineContext {
   };
   valyu: ValyuClient;
   gemini: GeminiClient;
+  traces: TraceStore;
   limits: {
     maxTaskCostUsd: number;
     maxResultsPerQuery: number;
@@ -93,7 +95,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     message: `Searching ${planned.length} sub-queries`,
     pct: 30,
   });
-  const { queries, sources: raw } = await runRetrieval({
+  const { queries, sources: raw, raw: rawResults } = await runRetrieval({
     valyu,
     queries: planned,
     budget,
@@ -157,6 +159,20 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     log,
   });
 
+  // Written after everything, so the trace records what was retrieved, what was
+  // discarded and what survived. Non-fatal: losing a debugging artefact must
+  // never cost a finished report.
+  const tracePath = await ctx.traces.write({
+    taskId: task.id,
+    question: task.question,
+    completedAt: new Date().toISOString(),
+    queries,
+    rawResults,
+    selected,
+    cost: { totalUsd: budget.record().totalUsd, txIds: budget.record().txIds },
+    ...(task.dateRange ? { dateRange: task.dateRange } : {}),
+  });
+
   log.info('pipeline complete', {
     sources: selected.length,
     citedSources: synthesis.citedSourceCount,
@@ -174,6 +190,7 @@ export async function runPipeline(ctx: PipelineContext): Promise<CompletionResul
     // Measured retrieval spend, plus estimated model spend kept separate so the
     // two are never presented as equally trustworthy.
     cost: { ...budget.record(), model: gemini.modelUsage },
+    ...(tracePath ? { tracePath } : {}),
     // Absent rather than empty when grounding could not run, so the interface
     // can distinguish "not checked" from "checked and found nothing".
     ...(grounding ? { grounding } : {}),

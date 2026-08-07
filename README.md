@@ -33,6 +33,94 @@ Vertex AI). Frontend is a Next.js app on Vercel.
 | API | `https://deepresearch-api-i5hdokk27q-nw.a.run.app` |
 | Worker | `https://deepresearch-worker-i5hdokk27q-nw.a.run.app` (private — Cloud Tasks only) |
 
+## Architecture
+
+```
+Browser ──SSE / fetch──► Vercel route handlers ──X-API-Key──► Cloud Run: API
+   (never holds a credential)                                      │
+                                                                   ├──► Firestore
+                                                                   ▼
+                                                          Cloud Tasks queue
+                                                                   │ OIDC push
+                                                                   ▼
+                                                          Cloud Run: worker
+                                                    ├──► Vertex AI (Gemini)
+                                                    ├──► Valyu /v1/search
+                                                    └──► Cloud Storage (traces)
+```
+
+| Question | Answer |
+|---|---|
+| **How HTTP requests are served** | Cloud Run, public, `min-instances=1`, CORS-restricted, `X-API-Key` required |
+| **How background work is queued** | Cloud Tasks. Named tasks (`task-{id}`) make duplicate enqueue a service-level rejection; retry policy is queue config; OIDC push keeps the worker unreachable |
+| **Where task state is stored** | Firestore, Native mode, `eur3`. Survives restarts; the claim transaction and lease live here |
+| **Where larger artifacts are stored** | Cloud Storage — raw Valyu payloads per task at `gs://…-traces/tasks/{id}/trace.json`, too large for a 1MB Firestore document. Reports live on the task document |
+| **How secrets are stored and injected** | Secret Manager, injected into Cloud Run at deploy. Two: `VALYU_API_KEY` (worker only) and `BACKEND_API_KEY` (API + Vercel server env) |
+| **Which model provider** | Vertex AI Gemini via the global endpoint — `gemini-3-flash-preview` for planning/reranking/grounding, `gemini-2.5-pro` for synthesis. The worker's service account authenticates directly, so there is **no model API key anywhere** |
+| **How Valyu Search is called** | `valyu-js` SDK, `search` only — see below |
+| **How it is deployed and updated** | Terraform for static infra; `scripts/deploy.sh` builds one image with Cloud Build and deploys both services. Frontend auto-deploys from GitHub on push |
+
+Two Cloud Run services from **one image**, entrypoint switched by `ROLE=api|worker`.
+They need separate scaling and separate identities — one is latency-sensitive and
+public, the other long-running and private — but not separate images: they share
+types, the Firestore client and logging, and always deploy from the same commit.
+
+Full reasoning for each choice, including the alternatives rejected, is in
+[`docs/design.md`](docs/design.md).
+
+## Retrieval strategy
+
+Only `POST /v1/search`, via the official `valyu-js` SDK. The DeepResearch and
+Answer endpoints are untouched — building the orchestration is the assignment.
+`GET /v1/datasources` was called **once during development** to record what the
+key can actually reach, so an unavailable corpus is a documented constraint
+rather than a runtime surprise.
+
+**Parameters used:** `includedSources`, `searchType`, `sourceBiases`,
+`maxNumResults` (10), `relevanceThreshold` (0.5), `startDate`/`endDate`,
+`isToolCall`. Each call has a 20s timeout and two retries, on 5xx and network
+errors only.
+
+**Not used, deliberately:** `maxPrice` — despite the name it is denominated in
+dollars per 1000 results and enforces a query-dependent minimum that can exceed
+the corpus's own price, so sending a per-call dollar budget rejects *every*
+search. Spend is bounded by the local ledger instead. Also unused: `fastMode`
+(trades retrieval quality for two seconds, the wrong direction here),
+`urlOnly`, `excludeSources`, `countryCode`, `responseLength`.
+
+**The strategy**, since a single unparameterised `search(question)` serves these
+questions badly — and Valyu rejects `site:`, boolean operators and quoted
+phrases, so precision cannot come from query syntax:
+
+1. **Decompose by facet, not by rephrasing.** One Flash call produces 3-5
+   sub-queries targeting *different aspects*. For "does semaglutide preserve
+   muscle mass in older adults" it produced trial outcomes, mechanism, FDA
+   adverse-event signals, and resistance-training co-intervention.
+2. **Route each facet to the corpus that holds it.** Clinical → PubMed +
+   clinical-trials; mechanism → bioRxiv/medRxiv; chemistry → ChEMBL/PubChem;
+   applied → patents. This is where 48 Valyu datasets beat a web index.
+3. **Widen across the preprint boundary.** Each corpus is paired with its
+   counterpart — PubMed ↔ bioRxiv/medRxiv — with the planner's choices biased up
+   (+3) and additions down (−2), so a facet on PubMed can still surface last
+   month's preprint. Cost-neutral: `maxNumResults` bounds the response.
+4. **Recall now, precision later.** Permissive thresholds, because deduplication
+   and reranking prune with better information than a threshold has.
+5. **Deduplicate** on identifiers (DOI → arXiv → PMID → PMC → NCT → normalised
+   URL), then on title + first author — the second pass is what catches the
+   preprint/published pair, which have *different* DOIs.
+6. **Rerank on three axes** against the original question: topical relevance,
+   directness, and study design. A single relevance score measurably failed —
+   three distinct values across twenty sources — and study design is what
+   separates a completed trial from a registered protocol.
+7. **Guarantee facet coverage**, because pure score ordering was deleting whole
+   facets the planner deliberately created.
+
+**Things that surprised me** are recorded in [`docs/design.md`](docs/design.md)
+§5 so they are not re-learned: `source_biases` keys are domains and a dataset id
+is silently ignored; the SDK rejects `"web"` in `includedSources` though the REST
+API accepts it; and Valyu returns one document as several chunked results, so
+deduplication must rejoin their text or most of each article is discarded.
+
 ## Example API usage
 
 The API requires an `X-API-Key` header. Retrieve the value with:

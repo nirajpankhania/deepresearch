@@ -5,6 +5,7 @@ import { createLogger } from '@deepresearch/shared/logger';
 import type { PipelineStage } from '@deepresearch/shared';
 
 import { GeminiClient } from './clients/gemini.js';
+import { TraceStore } from './clients/gcs.js';
 import { ValyuClient } from './clients/valyu.js';
 import { loadConfig } from './config.js';
 import { runPipeline } from './pipeline/index.js';
@@ -14,6 +15,7 @@ const config = loadConfig();
 const tasks = TaskRepository.forProject(config.projectId);
 
 const valyu = new ValyuClient(config.valyuApiKey, log);
+const traces = new TraceStore(config.traceBucket, log);
 
 /**
  * Attempts beyond this are not retried. Must match the queue's maxAttempts:
@@ -101,6 +103,7 @@ app.post('/process', async (c) => {
         draft: (partial) => tasks.publishDraft(taskId, partial, config.limits.leaseSeconds),
       },
       valyu,
+      traces,
       // Constructed per task, because the call counter is a per-task step limit.
       gemini: new GeminiClient({
         projectId: config.projectId,
