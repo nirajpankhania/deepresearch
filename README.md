@@ -153,19 +153,32 @@ The endpoint is not left open because it is backed by paid search and model
 calls: an open endpoint is a cost-exposure problem even though the research
 results themselves are not confidential.
 
-### Polling, not streaming
+### Streaming, with polling as a real fallback
 
-The client polls every 2s while a task is running, widens to 5s after the first
-minute, and stops on a terminal state.
+Server-sent events are the primary transport; polling every 2s (widening to 5s
+after a minute) is the fallback.
 
-A task runs for a minute or two, so an open connection buys little. SSE would
-have to survive a Vercel function timeout, and a dropped connection needs
-reconnection logic anyway — at which point the complexity exceeds a `setTimeout`.
-Polling degrades gracefully: a failed poll retries on the next tick, and the UI
-only surfaces an error after two consecutive failures, so a single dropped
-request is invisible. The interval widens because a task still running after a
-minute is usually in synthesis, which produces no intermediate progress worth
-the extra requests.
+**The Firestore listener lives on Cloud Run, not in the Vercel route handler.**
+Watching Firestore needs Google credentials, and putting a service account key
+in Vercel would add a third secret and the system's only long-lived key file.
+Cloud Run already has that access through its own service account, so it holds
+the listener and emits SSE; the Vercel handler adds the API key and pipes the
+bytes through, keeping the credential server-side.
+
+```
+worker ──writes──► Firestore
+                      │ onSnapshot (Cloud Run's own service account)
+                      ▼
+browser ◄──SSE── Vercel proxy ◄──SSE── Cloud Run  GET /tasks/:id/stream
+      EventSource     (adds X-API-Key)
+```
+
+Vercel's function duration limit closes the connection before a long task
+finishes, so reconnection was always required — `EventSource` reconnects on its
+own, and because the backend replays current state on subscribe, a reconnect
+resumes rather than losing progress. After three consecutive stream failures the
+client drops to polling permanently for that task, so a proxy that strips event
+streams costs smoothness rather than the feature.
 
 ### Configuring the backend URL
 
@@ -213,6 +226,20 @@ look impressive — see [Who this is for](#who-this-is-for) below.
    object from one built from all four.
 3. **A date-range control** wired to the search API's own bounds, so the budget
    is spent inside the window rather than on results that are then discarded.
+
+Each of these fills in **while the task runs**, not after it. Sub-queries are
+published as soon as the planner returns and tick off with their result counts
+as each search lands; the selected sources appear before synthesis; and the
+report streams in as it is written. A two-minute wait where nothing is visible
+is the difference between a tool that feels broken and one that feels like it is
+working.
+
+**Cost breakdown.** Retrieval spend per sub-query and model spend per stage,
+shown separately and labelled measured versus estimated — retrieval comes from
+Valyu's own response and is exact, model cost is derived from reported token
+counts against list prices. Reasoning tokens get their own column: they bill as
+output, never appear in the response, and are routinely the largest line. On a
+typical task model spend is over 3x retrieval spend, which a single total hides.
 
 Citations in the report are links to the matching source card, so checking a
 claim is one click rather than a scroll and a search.
@@ -424,8 +451,6 @@ Current, and honest.
 
 Deliberately out of scope, with the alternative noted:
 
-- **SSE/streaming** — polling is simpler across two clouds and degrades better;
-  streaming would want the report generated incrementally to be worth it.
 - **Multi-user auth** — would need per-user quotas and task ownership, which is a
   different product.
 - **A real eval harness** — the honest version needs a labelled question set;

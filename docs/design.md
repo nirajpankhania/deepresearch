@@ -256,12 +256,19 @@ no Firestore or SDK mocking needed to reach the logic being tested.
 
 ## 7. Frontend
 
-**Polling, not SSE.** The frontend polls every 2s while a task is running, backs
-off to 5s after 60s, and stops on a terminal state. SSE across two clouds means
-holding a connection open through a Vercel function, which has its own timeout and
-degrades badly; polling degrades gracefully, survives a dropped connection, and
-costs a request every two seconds. For a task measured in minutes that is the
-right trade.
+**SSE, with polling as the fallback.** The frontend follows a task by server-sent
+events, falling back to polling after repeated stream failures.
+
+The constraint that shaped it: watching Firestore needs Google credentials, and a
+service account key in Vercel would be a third secret and the only long-lived key
+file in the system. So the listener lives on Cloud Run — which already has that
+access through its own service account — and the Vercel route handler proxies the
+stream, adding the API key. The browser still never touches the backend directly.
+
+Vercel's function duration limit cuts the connection before a long task ends,
+which means reconnection was never optional. `EventSource` handles it, and
+because the backend replays current state on subscribe a reconnect resumes
+cleanly. The polling path remains as a genuine fallback rather than dead code.
 
 **Three domain features**, chosen because they make the retrieval strategy
 legible rather than because they are visually impressive:

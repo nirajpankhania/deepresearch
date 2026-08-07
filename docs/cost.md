@@ -29,6 +29,13 @@ speculatively.
 
 ### Model — estimated, $0.05 to $0.10
 
+**Now measured per task and shown in the interface.** Token counts come from the
+API's `usageMetadata` rather than being inferred from characters, priced per
+stage. A representative completed task: **retrieval $0.020 measured, model
+$0.067 estimated across 4 calls** — model spend is over three times retrieval,
+which the single total previously hid entirely.
+
+
 Four calls per task. Prompt and response sizes are measured; token counts are
 those divided by four.
 
