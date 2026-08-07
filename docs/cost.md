@@ -36,20 +36,19 @@ $0.067 estimated across 4 calls** — model spend is over three times retrieval,
 which the single total previously hid entirely.
 
 
-Four calls per task. Prompt and response sizes are measured; token counts are
-those divided by four.
+Four calls per task, each recorded on the task with its own token counts:
 
-| Stage | Model | Prompt | Response | Duration |
-|---|---|---|---|---|
-| Plan | Flash | ~2.2k chars (~550 tok) | ~1.4k chars | 3 – 13 s |
-| Rerank | Flash | ~16k chars (~4k tok) | ~1.1k chars | 3 – 18 s |
-| Synthesise | **Pro** | ~46k chars (~11.6k tok) | ~5.3k chars | **35 – 40 s** |
-| Ground | Flash | ~50k chars (~12.7k tok) | ~4.7k chars | 8 – 18 s |
+| Stage | Model | Duration |
+|---|---|---|
+| Plan | Flash | 3 – 13 s |
+| Rerank | Flash | 3 – 18 s |
+| Synthesise | **Pro** | **35 – 40 s** |
+| Ground | Flash | 8 – 22 s |
 
 **Reasoning tokens are the largest single variable and the least visible one.**
-They bill as output and are invisible in the response, so the response-length
-column above understates output billing considerably — a trivial prompt spent 611
-reasoning tokens during testing. Budgets are capped explicitly
+They bill as output and never appear in the response, which is why the interface
+shows them in their own column rather than folded into output — a trivial prompt
+spent 611 reasoning tokens during testing. Budgets are capped explicitly
 (`thinkingConfig.thinkingBudget`) at 2048 for planning, 1024 for reranking, and
 4096 each for synthesis and grounding, which bounds this rather than leaving it
 to the model.
@@ -91,10 +90,12 @@ budget, not the size of the source corpus.
 the planner routes to, not of question difficulty. A single mis-routed patent
 query costs more than an entire PubMed task.
 
-**Firestore reads scale with viewers, not with tasks.** Each polling client reads
-the task document every 2 seconds. One task watched by one person for 90 seconds
-is ~45 reads. This is free at current volume and becomes the dominant cost well
-before compute does — see [`scaling.md`](scaling.md).
+**Firestore reads scale with viewers, not with tasks.** Each viewer holds a
+Firestore listener for the life of the task — via the SSE endpoint, or ~45 polled
+reads if they fall back. Free at current volume, and it becomes the dominant cost
+well before compute does. Streaming also means each viewer now holds an open
+connection and therefore a slice of a Cloud Run instance, which is a different
+scaling characteristic from polling — see [`scaling.md`](scaling.md).
 
 **`min-instances` is a floor you pay whether or not anyone uses the system.**
 At low volume it exceeds all variable cost combined: at ten tasks a day, the idle
@@ -112,7 +113,8 @@ Roughly in order of return:
    of scope.
 3. **Lower the reasoning budgets.** 4096 for grounding is generous for what is
    essentially a classification task.
-4. **Cache the poll response** so N viewers of one task cost one Firestore read.
+4. **Share one Firestore listener across viewers of the same task**, so N
+   viewers cost one listener rather than N.
 5. **Drop `MAX_RESULTS_PER_QUERY` from 10 to 6.** Directly proportional to Valyu
    spend, and deduplication already discards a third to a half of what is
    retrieved.
