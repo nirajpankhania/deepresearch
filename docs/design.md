@@ -152,6 +152,22 @@ On read rather than on a schedule, because a sweeper needs Cloud Scheduler,
 another service account and another endpoint to secure, and reading is the only
 moment anyone is waiting on the answer.
 
+### The deleted task
+
+Deleting a running task is permitted, and stopping it promptly turned out to
+matter more than expected. Every publish path swallowed all errors, and the only
+unguarded write was the progress update at each stage boundary — so a task
+deleted during synthesis ran the entire Pro-tier call to completion and billed
+for a report with nowhere to go.
+
+Writes now distinguish a missing document from an ordinary failure.
+`TaskGoneError` propagates where other failures are still swallowed: losing a
+report because a convenience write failed would be the wrong trade, but
+continuing to spend on a task the user discarded is a different mistake. The
+worker treats it as a clean stop — nothing marked failed, no retry, and a 200 so
+the queue stops redelivering. `fail()` and `release()` tolerate the missing
+document rather than throwing from inside the handler's own error path.
+
 ---
 
 ## 5. Retrieval
@@ -183,6 +199,24 @@ that earns its place: a preprint and its published version have *different* DOIs
 so identifier matching alone reports them as two sources. The lower-relevance
 copy is retained as a `mergedAlternate` rather than discarded, because which
 version was found is itself informative.
+
+**Widening across the preprint boundary.** Hard routing has one specific blind
+spot: a clinical facet sent to PubMed cannot surface the medRxiv preprint
+reporting last month's trial, and in a fast-moving field that may be the only
+evidence there is. Each corpus is therefore paired with its counterpart across
+that boundary — PubMed ↔ bioRxiv/medRxiv, clinical trials → medRxiv, chemRxiv ↔
+arXiv — with the planner's own choices biased up (+3) and the additions down
+(−2), so widening supplements rather than replaces. It is cost-neutral, because
+`max_num_results` bounds the response regardless of how many corpora are
+searched: it changes *which* ten come back.
+
+Deliberately narrow rather than "search everything and let the reranker sort it
+out". It pairs corpora that carry the *same work at different stages*, which is
+where hard routing actually loses evidence. On a live task it surfaced six
+preprints the planner had not asked for, including the top-ranked source overall.
+
+⚠️ `source_biases` keys are **domains, not dataset ids** — a dataset id is
+accepted, range-checked, and silently ignored.
 
 **Rerank.** Valyu scores relevance per sub-query, so after merging five
 sub-queries the scores are five incommensurable scales. One Flash call re-judges
@@ -293,6 +327,18 @@ service account key in Vercel would be a third secret and the only long-lived ke
 file in the system. So the listener lives on Cloud Run — which already has that
 access through its own service account — and the Vercel route handler proxies the
 stream, adding the API key. The browser still never touches the backend directly.
+
+Frames are kept small deliberately. Source snippets — the extracted text of each
+document, up to 12k characters apiece — are stripped from streamed frames, and
+while only the draft is growing the server sends just the appended characters
+rather than the whole task. Before both, every draft update shipped 133KB of
+which 83% was text nothing renders, and it arrived in visible lumps. Total bytes
+for a task fell from 1.32MB to 140KB.
+
+Deciding when a frame is draft-only compares an explicit signature of the fields
+that warrant a full frame. Comparing serialised documents was the obvious
+approach and silently never matched: Firestore does not guarantee map field
+ordering between snapshots, so identical documents produced different bytes.
 
 Vercel's function duration limit cuts the connection before a long task ends,
 which means reconnection was never optional. `EventSource` handles it, and

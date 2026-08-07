@@ -20,6 +20,8 @@ export interface ValyuSearchParams {
   includedSources: string[];
   maxResults: number;
   relevanceThreshold: number;
+  /** Soft ranking hints, keyed by DOMAIN. Dataset ids are silently ignored. */
+  sourceBiases?: Record<string, number>;
   startDate?: string;
   endDate?: string;
 }
@@ -60,6 +62,9 @@ export class ValyuClient {
           relevanceThreshold: params.relevanceThreshold,
           ...(datasets.length > 0 ? { includedSources: datasets } : {}),
           searchType: datasets.length === 0 ? 'web' : wantsWeb ? 'all' : 'proprietary',
+          ...(params.sourceBiases && Object.keys(params.sourceBiases).length > 0
+            ? { sourceBiases: params.sourceBiases }
+            : {}),
           // NOTE: `maxPrice` is deliberately not sent. Despite the name it is
           // denominated in dollars per 1000 results, not dollars for the call,
           // and Valyu enforces a query-dependent minimum (observed: 2.00 for a

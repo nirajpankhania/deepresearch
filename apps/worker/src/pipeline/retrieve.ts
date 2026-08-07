@@ -6,6 +6,7 @@ import { TaskGoneError } from '@deepresearch/shared/firestore';
 import type { ValyuClient } from '../clients/valyu.js';
 import type { BudgetLedger } from './budget.js';
 import { estimateSearchCost, toSource } from './sources.js';
+import { widenSources } from './widen.js';
 
 /**
  * Stage 2 — run the planned sub-queries, under a spend cap.
@@ -74,9 +75,14 @@ export async function runRetrieval(opts: RetrievalOptions): Promise<RetrievalOut
   const settled = await Promise.allSettled(
     dispatched.map(async ({ query, index, estimate }) => {
       try {
+        // Widening is cost-neutral: maxResults bounds the response regardless
+        // of how many corpora are searched.
+        const widened = widenSources(query.includedSources);
+
         const outcome = await valyu.search({
           query: query.query,
-          includedSources: query.includedSources,
+          includedSources: widened.includedSources,
+          sourceBiases: widened.sourceBiases,
           maxResults,
           relevanceThreshold,
           ...(dateRange?.start ? { startDate: dateRange.start } : {}),

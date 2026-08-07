@@ -118,6 +118,15 @@ A failed task carries `error` instead of `report`:
   "error": { "message": "Research failed after multiple attempts...", "stage": "planning" } }
 ```
 
+Delete a task and its report:
+
+```bash
+curl -X DELETE "$API/tasks/$TASK" -H "X-API-Key: $KEY"    # 204
+```
+
+Permitted while a task is still running: the worker stops at its next write
+rather than finishing an expensive call for a report nobody will read.
+
 Health check (no key required):
 
 ```bash
@@ -231,6 +240,9 @@ look impressive — see [Who this is for](#who-this-is-for) below.
    object from one built from all four.
 3. **A date-range control** wired to the search API's own bounds, so the budget
    is spent inside the window rather than on results that are then discarded.
+
+Reports can be deleted, and the sidebar keeps them switchable without scrolling
+past a long one.
 
 Each of these fills in **while the task runs**, not after it. Sub-queries are
 published as soon as the planner returns and tick off with their result counts

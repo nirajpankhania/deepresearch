@@ -1,176 +1,188 @@
 # Example output
 
 A complete task, captured verbatim from the deployed system: the generated
-sub-queries, the sources retrieval selected, the final report, and the
-claim-grounding verdicts.
+sub-queries, the sources retrieval selected and how they were judged, the cost
+breakdown, the claim-grounding verdicts, and the final report.
 
 ```
 question    Does semaglutide preserve lean muscle mass in older adults during weight loss?
 status      completed
-cost        $0.03 measured, across 4 Valyu transactions
-sources     20 after deduplication, 8 cited
-grounding   15 of 20 cited claims fully supported
+sources     20 after deduplication, 13 cited
+grounding   22 of 26 cited claims fully supported
+cost        $0.03 retrieval (measured) + $0.068534 model (estimated)
 ```
 
 ## 1. Generated sub-queries
 
-One Gemini Flash call. These decompose the question by *facet* rather than
-rephrasing it, and each is routed to the corpus likely to hold that facet.
+One Flash call. Decomposed by *facet* rather than rephrasing, each routed to
+the corpus likely to hold that facet. Retrieval then widens each facet across
+the preprint boundary, biasing the planner's own choices up — which is why
+sources appear below from corpora not listed here.
 
-**1. `semaglutide clinical trial results body composition lean mass older adults`**
+**1. `semaglutide clinical trial body composition lean mass elderly`**
 
-- Sources: `valyu/valyu-pubmed`, `valyu/valyu-clinical-trials`
-- Results: 10
-- Rationale: This facet provides direct evidence from completed clinical studies regarding changes in muscle mass specifically in the elderly population.
+- Routed to: `valyu/valyu-pubmed`, `valyu/valyu-clinical-trials`
+- Results: 10 · $0.0050
+- Rationale: This facet provides direct evidence from randomized controlled trials regarding changes in fat-free mass in older populations.
 
-**2. `glp-1 receptor agonist molecular mechanisms muscle protein synthesis degradation`**
+**2. `glp-1 receptor agonist molecular mechanisms muscle protein synthesis`**
 
-- Sources: `valyu/valyu-pubmed`, `valyu/valyu-biorxiv`
-- Results: 10
-- Rationale: This facet explores the biological pathways by which semaglutide might influence muscle tissue at a cellular level.
+- Routed to: `valyu/valyu-pubmed`, `valyu/valyu-biorxiv`
+- Results: 10 · $0.0050
+- Rationale: Exploring the molecular mechanisms helps determine if semaglutide has a protective effect on muscle tissue at a cellular level.
 
-**3. `adverse events sarcopenia muscle weakness semaglutide elderly patients`**
+**3. `semaglutide adverse events sarcopenia muscle weakness reports`**
 
-- Sources: `valyu/valyu-openfda-drug-events`, `valyu/valyu-drug-labels`
-- Results: 5
-- Rationale: This facet identifies real-world safety signals and reported side effects related to muscle loss and weakness in older patients.
+- Routed to: `valyu/valyu-drug-labels`, `valyu/valyu-openfda-drug-events`
+- Results: 5 · $0.0150
+- Rationale: Regulatory data and post-marketing surveillance can reveal reported side effects concerning muscle weakness or significant lean mass reduction.
 
-**4. `semaglutide versus tirzepatide lean mass preservation weight loss trials`**
+**4. `semaglutide versus diet induced weight loss muscle mass retention`**
 
-- Sources: `valyu/valyu-medrxiv`
-- Results: 10
-- Rationale: This facet compares semaglutide to other modern weight loss treatments to determine if its effect on muscle preservation is unique.
+- Routed to: `valyu/valyu-pubmed`, `valyu/valyu-medrxiv`
+- Results: 10 · $0.0050
+- Rationale: Comparing semaglutide to other weight loss methods clarifies if muscle loss is drug-specific or a general consequence of weight loss.
 
 ## 2. Selected sources
 
-| # | Title | Corpus | Date | Identifier | Rel. | Cited |
-|---|---|---|---|---|---|---|
-| 1 | [Effect of Semaglutide on Physical Function, Body Compositi…](https://pubmed.ncbi.nlm.nih.gov/PMC11437224) | `pubmed` | 2024-09-13 | `10.2196/62667` | 1 | ✓ |
-| 2 | [Impact of Incretin-Based Therapy on Skeletal Muscle Health](https://pubmed.ncbi.nlm.nih.gov/PMC12471476) | `pubmed` | 2025-09-18 | `10.3390/medicina61091691` | 0.7 | ✓ |
-| 3 | [Impact of Selected Glucagon-like Peptide-1 Receptor Agonis…](https://pubmed.ncbi.nlm.nih.gov/PMC11311305) | `pubmed` | 2024-07-27 | `10.3390/ijms25158214` | 0.7 | ✓ |
-| 4 | [Body Composition Changes with Semaglutide: A Systematic Re…](https://www.medrxiv.org/content/10.1101/2025.09.29.25336760) | `medrxiv` | 2025-01-01 | `10.1101/2025.09.29.25336760` | 0.7 | ✓ |
-| 5 | [GLP-1 Receptor Agonists for Obesity Management in Older Ad…](https://pubmed.ncbi.nlm.nih.gov/PMC13272609) | `pubmed` | 2026-06-17 | `10.1007/s13668-026-00777-x` | 0.7 | ✓ |
-| 6 | [Moving beyond the scale: musculoskeletal risks, evidence g…](https://pubmed.ncbi.nlm.nih.gov/PMC12592101) | `pubmed` | 2025-10-24 | `10.3389/fragi.2025.1640030` | 0.7 | ✓ |
-| 7 | [Obesity pharmacotherapy in older adults: a narrative revie…](https://pubmed.ncbi.nlm.nih.gov/PMC11971046) | `pubmed` | 2024-05-06 | `10.1038/s41366-024-01529-z` | 0.7 | ✓ |
-| 8 | [Glucagon Like Peptide-1-Induced Glucose Metabolism in Diff…](https://pubmed.ncbi.nlm.nih.gov/PMC3429413) | `pubmed` | 2012-08-28 | `10.1371/journal.pone.0044284` | 0.4 | ✓ |
-| 9 | [Glucagon-Like Peptide-1 Receptor Activation Stimulates PKA…](https://www.biorxiv.org/content/10.1101/2022.04.21.489078) | `biorxiv` | 2023-01-01 | `10.1101/2022.04.21.489078` | 0.4 |  |
-| 10 | [Comparative Effectiveness of Semaglutide and Tirzepatide f…](https://www.medrxiv.org/content/10.1101/2023.11.21.23298775) | `medrxiv` | 2023-01-01 | `10.1101/2023.11.21.23298775` | 0.4 |  |
-| 11 | [Weight trajectories after last Tirzepatide or Semaglutide …](https://doi.org/10.64898/2026.01.26.26344839) | `medrxiv` | 2026-01-01 | `10.64898/2026.01.26.26344839` | 0.4 |  |
-| 12 | [Trajectory of weight regain after cessation of GLP-1 recep…](https://www.medrxiv.org/content/10.1101/2025.06.09.25328726) | `medrxiv` | 2025-01-01 | `10.1101/2025.06.09.25328726` | 0.4 |  |
-| 13 | [Adverse Event Comparison between Glucagon-like Peptide-1 R…](https://www.medrxiv.org/content/10.1101/2024.04.21.24306138) | `medrxiv` | 2024-01-01 | `10.1101/2024.04.21.24306138` | 0.4 |  |
-| 14 | [Comparison of semaglutide and lifestyle counseling for wei…](https://doi.org/10.64898/2025.12.01.25341393) | `medrxiv` | 2025-01-01 | `10.64898/2025.12.01.25341393` | 0.4 |  |
-| 15 | [Effects of tirzepatide therapy on body weight and body com…](https://pubmed.ncbi.nlm.nih.gov/PMC13388208) | `pubmed` | 2026-06-19 | `10.3389/fendo.2026.1834580` | 0.4 |  |
-| 16 | [Pleiotropic Effects of GLP-1 and Analogs on Cell Signaling…](https://pubmed.ncbi.nlm.nih.gov/PMC6266510) | `pubmed` | 2018-11-23 | `10.3389/fendo.2018.00672` | 0 |  |
-| 17 | [Differences in signalling, trafficking and glucoregulatory…](https://www.biorxiv.org/content/10.1101/803833) | `biorxiv` | 2019-01-01 | `10.1101/803833` | 0 |  |
-| 18 | [Rational design by structural biology of industrializable,…](https://www.biorxiv.org/content/10.1101/2022.04.11.487850) | `biorxiv` | 2022-01-01 | `10.1101/2022.04.11.487850` | 0 |  |
-| 19 | [Physiology and Emerging Biochemistry of the Glucagon-Like …](https://pubmed.ncbi.nlm.nih.gov/PMC3359799) | `pubmed` | 2012-05-14 | `10.1155/2012/470851` | 0 |  |
-| 20 | [Trends and Disparities in Newer GLP1 Receptor Agonist Init…](https://www.medrxiv.org/content/10.1101/2025.01.20.25320839) | `medrxiv` | 2025-01-01 | `10.1101/2025.01.20.25320839` | 0 |  |
+Reranked on three axes against the original question — topical relevance,
+directness, and study design. `Score` is the composite.
 
-**Deduplication.** Most merges are Valyu returning one document as several
-chunked results sharing a DOI; their text is rejoined rather than discarded.
+| # | Title | Corpus | Design | Score | Cited |
+|---|---|---|---|---|---|
+| 1 | [GLP-1 Receptor Agonists for Obesity Management in Ol…](https://pubmed.ncbi.nlm.nih.gov/PMC13272609) | `pubmed` | review | 0.868 | ✓ |
+| 2 | [Impact of Semaglutide on fat mass, lean mass and mus…](https://pubmed.ncbi.nlm.nih.gov/PMC12673431) | `pubmed` | observational | 0.865 | ✓ |
+| 3 | [Moving beyond the scale: musculoskeletal risks, evid…](https://pubmed.ncbi.nlm.nih.gov/PMC12592101) | `pubmed` | review | 0.848 | ✓ |
+| 4 | [Body Composition Changes with Semaglutide: A Systema…](https://www.medrxiv.org/content/10.1101/2025.09.29.25336760) | `medrxiv` | meta-analysis | 0.834 | ✓ |
+| 5 | [Bone mineral density and turnover response to GLP-1 …](https://pubmed.ncbi.nlm.nih.gov/PMC12695752) | `pubmed` | observational | 0.803 | ✓ |
+| 6 | [Pharmacological weight loss with incretin-based ther…](https://www.medrxiv.org/content/10.1101/2025.07.28.25332295) | `medrxiv` | observational | 0.777 | ✓ |
+| 7 | [Lean Mass and Musculoskeletal Preservation in GLP-1-…](https://pubmed.ncbi.nlm.nih.gov/PMC13303403) | `pubmed` | review | 0.773 | ✓ |
+| 8 | [The Influence of Glucagon-like Peptide-1 Receptor Ag…](https://pubmed.ncbi.nlm.nih.gov/PMC12733374) | `pubmed` | review | 0.745 | ✓ |
+| 9 | [Not All Weight Loss Is Equal: Towards Muscle‐Preserv…](https://pubmed.ncbi.nlm.nih.gov/PMC13121907) | `pubmed` | review | 0.698 | ✓ |
+| 10 | [Semaglutide-induced lean mass loss: clinical concern…](https://pubmed.ncbi.nlm.nih.gov/PMC13236199) | `pubmed` | review | 0.698 | ✓ |
+| 11 | [15-PGDH Inhibition Overcomes Muscle Regenerative Def…](https://doi.org/10.64898/2026.02.26.708119) | `biorxiv` | in-vitro | 0.665 | ✓ |
+| 12 | [Understanding Impact of Anti‐Obesity Medications on …](https://pubmed.ncbi.nlm.nih.gov/PMC13008602) | `pubmed` | review | 0.622 | ✓ |
+| 13 | [Semaglutide promotes intramuscular fat formation aft…](https://doi.org/10.64898/2026.06.16.732451) | `biorxiv` | in-vitro | 0.549 | ✓ |
+| 14 | [Glucagon Like Peptide-1-Induced Glucose Metabolism i…](https://pubmed.ncbi.nlm.nih.gov/PMC3429413) | `pubmed` | in-vitro | 0.393 |  |
+| 15 | [Novel Site-Specific Fatty Chain-Modified GLP-1 Recep…](https://pubmed.ncbi.nlm.nih.gov/PMC6412877) | `pubmed` | in-vitro | 0.338 |  |
+| 16 | [DNA-based delivery of incretin receptor agonists usi…](https://www.biorxiv.org/content/10.1101/2025.05.30.656889) | `biorxiv` | in-vitro | 0.321 |  |
+| 17 | [Physiology and Emerging Biochemistry of the Glucagon…](https://pubmed.ncbi.nlm.nih.gov/PMC3359799) | `pubmed` | review | 0.248 |  |
+| 18 | [Signaling architecture of the glucagon-like peptide-…](https://pubmed.ncbi.nlm.nih.gov/PMC12807469) | `pubmed` | review | 0.248 |  |
+| 19 | [Dynamics of GLP-1R peptide agonist engagement are co…](https://www.biorxiv.org/content/10.1101/2021.03.10.434902) | `biorxiv` | modelling | 0.2 |  |
+| 20 | [WEGOVY (SEMAGLUTIDE) INJECTION, SOLUTION WEGOVY (SEM…](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=ee06186f-2aa3-4990-a760-757579d8f77b) | `drug-labels` | other | 0.18 |  |
 
-- **[1]** Effect of Semaglutide on Physical Function, Body C — 1 merged (doi×1)
-- **[4]** Body Composition Changes with Semaglutide: A Syste — 1 merged (doi×1)
-- **[5]** GLP-1 Receptor Agonists for Obesity Management in  — 1 merged (doi×1)
-- **[6]** Moving beyond the scale: musculoskeletal risks, ev — 1 merged (doi×1)
-- **[7]** Obesity pharmacotherapy in older adults: a narrati — 1 merged (doi×1)
-- **[8]** Glucagon Like Peptide-1-Induced Glucose Metabolism — 1 merged (doi×1)
-- **[10]** Comparative Effectiveness of Semaglutide and Tirze — 1 merged (doi×1)
-- **[14]** Comparison of semaglutide and lifestyle counseling — 1 merged (doi×1)
-- **[15]** Effects of tirzepatide therapy on body weight and  — 1 merged (doi×1)
-- **[18]** Rational design by structural biology of industria — 1 merged (doi×1)
+Corpora represented: {'pubmed': 13, 'medrxiv': 2, 'biorxiv': 4, 'drug-labels': 1}
 
-## 3. Claim grounding
+## 3. Cost
 
-Every citation-bearing sentence re-read against the source it cites.
-**15 of 20 fully supported.**
+Retrieval is measured from the search responses and backed by transaction ids.
+Model cost is estimated from reported token counts against list prices — the
+two are never added as if equally trustworthy.
+
+| Stage | Model | In | Out | Reasoning | Cost |
+|---|---|---|---|---|---|
+| planning | `gemini-3-flash-preview` | 819 | 255 | 1,420 | $0.0044 |
+| reranking | `gemini-3-flash-preview` | 6,392 | 1,401 | 0 | $0.0054 |
+| synthesising | `gemini-2.5-pro` | 11,295 | 1,155 | 2,738 | $0.0530 |
+| grounding | `gemini-3-flash-preview` | 6,449 | 1,479 | 0 | $0.0056 |
+
+Retrieval **$0.03** measured across 4 transactions · model **$0.068534** estimated · total **$0.0985**
+
+## 4. Claim grounding
+
+Every citation-bearing sentence re-read against the source it cites. **22 of 26 fully supported.**
 
 Claims that did not fully verify:
 
-- **unsupported** — “The available evidence is scarce and indirect [7].”
-  <br>*The source text discusses the 'obesity paradox' and the rationale for pharmacological intervention but does not state that evidence is scarce and indirect.*
-- **unsupported** — “A narrative review on obesity pharmacotherapy in this population notes that "scarce evidence exists" for agents like semaglutide [7].”
-  <br>*The provided text does not contain the phrase 'scarce evidence exists' for semaglutide; it discusses the obesity paradox and incretin receptor agonists generally.*
-- **unsupported** — “The section intended to discuss semaglutide-based clinical evidence from the SUSTAIN trials cuts off before presenting any findings [5].”
-  <br>*The provided text discusses liraglutide and ends with a sentence about liraglutide; it does not mention the SUSTAIN trials or semaglutide clinical evidence.*
-- **unsupported** — “In vitro studies on muscle cells also found that semaglutide and liraglutide could counteract atrophy-related molecular changes [3].”
-  <br>*While the source mentions molecular markers of atrophy, it does not specifically detail in vitro studies on muscle cells counteracting these changes.*
-- **partial** — “One is a protocol for a future study [1], another is the introduction to a meta-analysis that does not include its findings [4], and a third contains an incomplete sentence at the critical point of discussing semaglutide's effects on body composition [5].”
-  <br>*The first two points are supported, but the third source ends with an incomplete sentence about liraglutide, not semaglutide.*
+- **unsupported** — “Similarly, another study using DXA scans reported an overall decrease in total lean mass of 9.7% from baseline with semaglutide, but the proportion of lean mass relative to total body mass increased by 3.0 percentage points [2].”
+  <br>*The source text is truncated and does not contain the specific figures of 9.7% or 3.0 percentage points.*
+- **unsupported** — “In the STEP clinical trial program, the weight loss from semaglutide was primarily from fat, but the proportion of lean mass loss ranged from approximately 20% to 40% of the total weight reduction [10].”
+  <br>*The source text does not mention the STEP clinical trial program or the specific 20% to 40% range for lean mass loss.*
+- **unsupported** — “Likewise, the QUALITY trial found that combining enobosarm with semaglutide led to superior preservation of stair-climbing power and lower-extremity strength compared to semaglutide alone [3].”
+  <br>*The source mentions the QUALITY trial but does not provide specific results regarding stair-climbing power or lower-extremity strength.*
+- **partial** — “Much of the evidence on mechanisms and mitigation strategies comes from preclinical studies in mice and monkeys, and the human relevance of these findings is not yet determined [6, 11, 12, 13].”
+  <br>*The sources describe preclinical studies in mice and monkeys, but they do not explicitly state that the human relevance is 'not yet determined'.*
 
-## 4. Final report
+## 5. Final report
 
-Verbatim. Citation numbers correspond to the source table above.
+Verbatim. Citation numbers correspond to the table above.
 
 ---
 
-Based on the provided sources, there is no definitive answer as to whether semaglutide preserves lean muscle mass in older adults during weight loss. The available evidence is scarce and indirect [7]. One clinical trial of a combination therapy implies that semaglutide used alone does result in a loss of lean mass in older adults, while preclinical studies in animals suggest a potential for muscle-protective effects [2, 3, 6].
+Based on the provided sources, there is no direct clinical trial evidence to definitively conclude whether semaglutide preserves lean muscle mass in older adults during weight loss. Evidence from studies in general adult populations and preclinical models indicates that semaglutide-induced weight loss includes a significant reduction in lean mass. However, some data suggest the proportion of lean mass relative to total body mass may increase, and combination therapies are being explored to mitigate lean mass loss.
 
-## Evidence from Human Clinical Trials
+## Semaglutide and Lean Mass Loss
 
-The sources contain limited direct evidence from human clinical trials on semaglutide's effect on lean mass in older adults. A narrative review on obesity pharmacotherapy in this population notes that "scarce evidence exists" for agents like semaglutide [7].
+While semaglutide is an effective medication for weight loss, a key concern is the quality of that loss, as preserving muscle is critical for metabolic health and function [4, 8]. Studies show that weight loss induced by glucagon-like peptide-1 (GLP-1) receptor agonists like semaglutide is not exclusively from fat; a portion comes from fat-free or lean mass [9]. One source states that 25-40% of the total weight lost with GLP-1 medications may be from skeletal muscle mass or other fat-free mass [9].
 
-The most direct finding comes from a Phase 2 trial that tested semaglutide in combination with another drug. In this trial, adding the investigational agent enobosarm to semaglutide "reduced lean mass loss by 71%" compared to treatment with semaglutide alone [6]. This result suggests that semaglutide by itself causes a loss of lean muscle mass, which can be partially prevented with an adjunctive therapy [6].
+A clinical study in adults with obesity (the SEMALEAN study) found that 12 months of treatment with 2.4 mg of semaglutide led to a significant initial decrease in lean mass by month seven, which then stabilized through month 12 [2]. Despite this absolute loss, the proportion of lean mass relative to total body mass increased between months seven and 12 [2]. Similarly, another study using DXA scans reported an overall decrease in total lean mass of 9.7% from baseline with semaglutide, but the proportion of lean mass relative to total body mass increased by 3.0 percentage points [2]. In the STEP clinical trial program, the weight loss from semaglutide was primarily from fat, but the proportion of lean mass loss ranged from approximately 20% to 40% of the total weight reduction [10].
 
-The need for more research in this area is highlighted by a protocol for an upcoming open-label randomized controlled trial. This planned study aims to investigate the effect of semaglutide on body composition, physical function, and biomarkers of aging specifically in older adults with overweight and insulin resistance [1]. Similarly, the introduction to a systematic review and meta-analysis (a preprint) notes that evidence regarding semaglutide's effect on body composition is "mixed," with some studies reporting minimal loss of lean body mass and others suggesting more substantial reductions [4]. However, neither of these sources provides results from their respective studies [1, 4].
+Preclinical research in obese mice supports these findings, showing that while semaglutide significantly reduced fat mass by 46%, it also caused a significant decrease in lean body mass (LBM) [6]. In this mouse model, the loss of LBM contributed to roughly 32% of the total weight loss [6].
 
-A scoping review on GLP-1 receptor agonists in older adults also touches on the topic, but the provided text is incomplete. It mentions that the effects of a similar drug, liraglutide, on body composition in older adults are "insufficiently characterized" [5]. The section intended to discuss semaglutide-based clinical evidence from the SUSTAIN trials cuts off before presenting any findings [5].
+## Evidence in Older Adults
 
-## Preclinical and Mechanistic Evidence
+The provided sources do not contain clinical trial results detailing the effects of semaglutide monotherapy on the body composition of older adults [1, 5]. The impact of GLP-1 agonists on body composition in older adults is described as "insufficiently characterized" [1]. A key concern is that disproportionate lean mass loss during treatment could lead to frailty and adverse outcomes in sarcopenia-prone populations, such as older adults [8].
 
-While clinical data on older adults is limited, preclinical studies in animal and cell models suggest that GLP-1 receptor agonists (RAs) like semaglutide may have beneficial effects on muscle tissue [2, 3].
+Indirect evidence comes from a trial of a combination therapy. The Phase 2b QUALITY trial investigated semaglutide with and without enobosarm, a compound designed to preserve muscle [3]. The results showed that adding enobosarm to semaglutide reduced the loss of lean mass by 71% compared to treatment with semaglutide alone, which strongly suggests that semaglutide by itself causes significant lean mass loss [3]. Other combination therapies are also being developed to preserve skeletal muscle during semaglutide treatment, including agents like bimagrumab and trevogrumab, which have shown promise in preclinical models [12].
 
-In mouse models of diabetes and high-fat diets, semaglutide was found to increase muscle mass and fiber size, restore muscle strength, and reduce fat infiltration in muscle [2]. Another study in obese mice observed that semaglutide improved sarcopenic adiposity and reversed obesity-related changes in muscle fiber types [3]. In a different mouse model of muscle atrophy, semaglutide attenuated muscle wasting and preserved grip strength [2].
+## Muscle Quality and Function
 
-Mechanistically, these protective effects in preclinical models are linked to the suppression of molecular markers for muscle protein degradation (atrogin-1 and MuRF-1) and an increase in factors that promote muscle growth (MyoD and MyoG) [2, 3]. In vitro studies on muscle cells also found that semaglutide and liraglutide could counteract atrophy-related molecular changes [3]. Furthermore, GLP-1 has been shown to promote glucose uptake in human muscle satellite cells, and the GLP-1 receptor is expressed in human muscle tissue, suggesting a potential for direct physiological relevance [8].
+The preservation of muscle involves more than just mass; it also includes quality and function [7]. One mouse study raised concerns about muscle quality, finding that semaglutide promoted the formation of intramuscular adipose tissue (IMAT) after a muscle injury [13]. The accumulation of IMAT is associated with poor muscle quality and impaired function [13].
+
+In contrast, the SEMALEAN study in humans reported that handgrip strength, a measure of muscle function, actually increased between months seven and 12 of semaglutide treatment, even as absolute lean mass was lost earlier in the treatment period [2]. Likewise, the QUALITY trial found that combining enobosarm with semaglutide led to superior preservation of stair-climbing power and lower-extremity strength compared to semaglutide alone [3]. This highlights the importance of assessing a "quality of weight loss" framework that includes not only body composition but also functional performance [7].
 
 ## Limitations
 
-The provided sources do not contain sufficient evidence to fully answer the question. The primary limitations are:
-*   The corpus lacks results from any completed clinical trial that directly measured changes in lean muscle mass in older adults treated with semaglutide alone for weight loss.
-*   The most relevant human data comes from a trial of a *combination therapy*, which allows for an inference about semaglutide but does not directly report on its isolated effects on lean mass [6].
-*   Several sources that appear highly relevant do not contain results. One is a protocol for a future study [1], another is the introduction to a meta-analysis that does not include its findings [4], and a third contains an incomplete sentence at the critical point of discussing semaglutide's effects on body composition [5].
-*   Evidence suggesting a muscle-protective effect of semaglutide is derived entirely from preclinical studies in mice and cell cultures [2, 3]. These findings may not translate to clinical outcomes in older humans undergoing significant weight loss.
+The provided sources do not offer a complete answer to the research question. The most significant limitation is the absence of specific clinical trial results on the effects of semaglutide monotherapy on lean mass in older adults.
+*   One source describing a pilot trial in older adults that used DXA scans to measure lean mass did not include the study's results [5].
+*   A systematic review and meta-analysis designed to clarify the effects of semaglutide on body composition was also missing its results section [4].
+*   Much of the evidence on mechanisms and mitigation strategies comes from preclinical studies in mice and monkeys, and the human relevance of these findings is not yet determined [6, 11, 12, 13].
+*   The evidence that is available comes from studies of general adult populations, which may not be fully generalizable to older adults, who are at higher risk for sarcopenia [2, 8].
+*   Finally, understanding the impact of these medications on skeletal muscle is complicated by the use of different measurement methods across studies, such as DXA and bioelectrical impedance analysis (BIA) [7, 12].
 
 ## Sources
 
-1. [Effect of Semaglutide on Physical Function, Body Composition, and Biomarkers of Aging in Older Adults With Overweight and Insulin Resistance: Protocol for an Open-Labeled Randomized Controlled Trial](https://pubmed.ncbi.nlm.nih.gov/PMC11437224)
-   Tiffany Leung, Tiffany M Cortes, Libia Vasquez et al. · 2024-09-13 · valyu/valyu-pubmed · DOI 10.2196/62667  
-2. [Impact of Incretin-Based Therapy on Skeletal Muscle Health](https://pubmed.ncbi.nlm.nih.gov/PMC12471476)
-   Andrijana Koceva, Andrej Janež, Mojca Jensterle et al. · 2025-09-18 · valyu/valyu-pubmed · DOI 10.3390/medicina61091691  
-3. [Impact of Selected Glucagon-like Peptide-1 Receptor Agonists on Serum Lipids, Adipose Tissue, and Muscle Metabolism—A Narrative Review](https://pubmed.ncbi.nlm.nih.gov/PMC11311305)
-   Zsolt Szekeres, Andras Nagy, Kamilla Jahner et al. · 2024-07-27 · valyu/valyu-pubmed · DOI 10.3390/ijms25158214  
+1. [GLP-1 Receptor Agonists for Obesity Management in Older Adults: A Scoping Review on the Risk of Sarcopenia and Sarcopenic Obesity](https://pubmed.ncbi.nlm.nih.gov/PMC13272609)
+   Hilal Simsek, Asli Ucar · 2026-06-17 · valyu/valyu-pubmed · DOI 10.1007/s13668-026-00777-x  
+2. [Impact of Semaglutide on fat mass, lean mass and muscle function in patients with obesity: The  SEMALEAN  study Alissou et al.](https://pubmed.ncbi.nlm.nih.gov/PMC12673431)
+   Mathieu Alissou, Thomas Demangeat, Vanessa Folope et al. · 2025-10-09 · valyu/valyu-pubmed · DOI 10.1111/dom.70141  
+3. [Moving beyond the scale: musculoskeletal risks, evidence gaps and emerging combination strategies to optimize the quality of weight loss pharmacotherapy in older adults Reid and Bhasin 10.3389/fragi.2025.1640030](https://pubmed.ncbi.nlm.nih.gov/PMC12592101)
+   Kieran F. Reid, Shalender Bhasin · 2025-10-24 · valyu/valyu-pubmed · DOI 10.3389/fragi.2025.1640030  
 4. [Body Composition Changes with Semaglutide: A Systematic Review and Meta-Analysis](https://www.medrxiv.org/content/10.1101/2025.09.29.25336760)
    Guilherme Giorelli, Milton Mizumoto, Silvia Sartoretto et al. · 2025-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2025.09.29.25336760  
-5. [GLP-1 Receptor Agonists for Obesity Management in Older Adults: A Scoping Review on the Risk of Sarcopenia and Sarcopenic Obesity](https://pubmed.ncbi.nlm.nih.gov/PMC13272609)
-   Hilal Simsek, Asli Ucar · 2026-06-17 · valyu/valyu-pubmed · DOI 10.1007/s13668-026-00777-x  
-6. [Moving beyond the scale: musculoskeletal risks, evidence gaps and emerging combination strategies to optimize the quality of weight loss pharmacotherapy in older adults Reid and Bhasin 10.3389/fragi.2025.1640030](https://pubmed.ncbi.nlm.nih.gov/PMC12592101)
-   Kieran F. Reid, Shalender Bhasin · 2025-10-24 · valyu/valyu-pubmed · DOI 10.3389/fragi.2025.1640030  
-7. [Obesity pharmacotherapy in older adults: a narrative review of evidence](https://pubmed.ncbi.nlm.nih.gov/PMC11971046)
-   Alex E. Henney, John P. H. Wilding, Uazman Alam et al. · 2024-05-06 · valyu/valyu-pubmed · DOI 10.1038/s41366-024-01529-z  
-8. [Glucagon Like Peptide-1-Induced Glucose Metabolism in Differentiated Human Muscle Satellite Cells Is Attenuated by Hyperglycemia Hyperglycemia Attenuates GLP-1 Glucose Uptake](https://pubmed.ncbi.nlm.nih.gov/PMC3429413)
+5. [Bone mineral density and turnover response to GLP-1 receptor agonists in older adults with overweight/obesity and prediabetes/type 2 diabetes: a 20-week pilot trial  <i> post hoc </i>  analysis Dinkla et al. 10.3389/fragi.2025.1691007](https://pubmed.ncbi.nlm.nih.gov/PMC12695752)
+   Lauren Dinkla, Kristen M. Beavers, Ronna Robbins et al. · 2025-11-06 · valyu/valyu-pubmed · DOI 10.3389/fragi.2025.1691007  
+6. [Pharmacological weight loss with incretin-based therapies does not result in a disproportionate loss of muscle mass or function in obese mice and humans](https://www.medrxiv.org/content/10.1101/2025.07.28.25332295)
+   Henning Tim Langer, Natalie K. Gilmore, Chris M. T. Hayden et al. · 2025-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2025.07.28.25332295  
+7. [Lean Mass and Musculoskeletal Preservation in GLP-1-Based Obesity Treatment: Nutrition, Exercise, Supplementation, and Monitoring Strategies](https://pubmed.ncbi.nlm.nih.gov/PMC13303403)
+   Roko Šantić, Lovre Martinović, Nikola Pavlović et al. · 2026-05-27 · valyu/valyu-pubmed · DOI 10.3390/metabo16060364  
+8. [The Influence of Glucagon-like Peptide-1 Receptor Agonists and Other Incretin Hormone Agonists on Body Composition](https://pubmed.ncbi.nlm.nih.gov/PMC12733374)
+   Lampros Chrysavgis, Niki Gerasimoula Mourelatou, Maria-Evangelia Koloutsou et al. · 2025-12-17 · valyu/valyu-pubmed · DOI 10.3390/ijms262412130  
+9. [Not All Weight Loss Is Equal: Towards Muscle‐Preserving Therapies in Obesity](https://pubmed.ncbi.nlm.nih.gov/PMC13121907)
+   Joseph D. Abraham, Muhammad Shahzeb Khan, Stefan D. Anker · 2026-04-27 · valyu/valyu-pubmed · DOI 10.1002/jcsm.70298  
+10. [Semaglutide-induced lean mass loss: clinical concern or physiological adaptation](https://pubmed.ncbi.nlm.nih.gov/PMC13236199)
+   Muhammad Qaseem, Naveed Ahmad, Ehtisham Haider et al. · 2026-05-11 · valyu/valyu-pubmed · DOI 10.1097/ms9.0000000000005145  
+11. [15-PGDH Inhibition Overcomes Muscle Regenerative Deficit Seen With GLP1-Receptor Agonist–Induced Weight Loss](https://doi.org/10.64898/2026.02.26.708119)
+   Minas Nalbandian, Jameel Lone, Emmeran Le Moal et al. · 2026-01-01 · valyu/valyu-biorxiv · DOI 10.64898/2026.02.26.708119  
+12. [Understanding Impact of Anti‐Obesity Medications on Skeletal Muscle Mass Change Is Confounded by Measurement Methods](https://pubmed.ncbi.nlm.nih.gov/PMC13008602)
+   Arden McMath, Dympna Gallagher · 2025-11-24 · valyu/valyu-pubmed · DOI 10.1111/obr.70041  
+13. [Semaglutide promotes intramuscular fat formation after injury](https://doi.org/10.64898/2026.06.16.732451)
+   Christian Noble, Dawson Geller, Nikhil Urs et al. · 2026-01-01 · valyu/valyu-biorxiv · DOI 10.64898/2026.06.16.732451  
+14. [Glucagon Like Peptide-1-Induced Glucose Metabolism in Differentiated Human Muscle Satellite Cells Is Attenuated by Hyperglycemia Hyperglycemia Attenuates GLP-1 Glucose Uptake](https://pubmed.ncbi.nlm.nih.gov/PMC3429413)
    Charlotte J. Green, Tora I. Henriksen, Bente K. Pedersen et al. · 2012-08-28 · valyu/valyu-pubmed · DOI 10.1371/journal.pone.0044284  
-9. [Glucagon-Like Peptide-1 Receptor Activation Stimulates PKA-Mediated Phosphorylation of Raptor and this Contributes to the Weight Loss Effect of Liraglutide](https://www.biorxiv.org/content/10.1101/2022.04.21.489078)
-   Thao D. V. Le, Dianxin Liu, Blair J. Ellis et al. · 2023-01-01 · valyu/valyu-biorxiv · DOI 10.1101/2022.04.21.489078  
-10. [Comparative Effectiveness of Semaglutide and Tirzepatide for Weight Loss in Adults with Overweight and Obesity in the US: A Real-World Evidence Study](https://www.medrxiv.org/content/10.1101/2023.11.21.23298775)
-   Patricia J Rodriguez, Brianna M Goodwin Cartwright, Samuel Gratzl et al. · 2023-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2023.11.21.23298775  
-11. [Weight trajectories after last Tirzepatide or Semaglutide prescription across a federated health network](https://doi.org/10.64898/2026.01.26.26344839)
-   Karthik Murugadoss, Gowtham Varma, AJ Venkatakrishnan et al. · 2026-01-01 · valyu/valyu-medrxiv · DOI 10.64898/2026.01.26.26344839  
-12. [Trajectory of weight regain after cessation of GLP-1 receptor agonists: a systematic review and nonlinear meta-regression](https://www.medrxiv.org/content/10.1101/2025.06.09.25328726)
-   Brajan Budini, Steven Luo, Martin Tam et al. · 2025-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2025.06.09.25328726  
-13. [Adverse Event Comparison between Glucagon-like Peptide-1 Receptor Agonists and Other Anti-Obesity Medications Following Bariatric Surgery](https://www.medrxiv.org/content/10.1101/2024.04.21.24306138)
-   Jason M Samuels, Kevin Niswender, Christianne L. Roumie et al. · 2024-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2024.04.21.24306138  
-14. [Comparison of semaglutide and lifestyle counseling for weight loss using electronic health records](https://doi.org/10.64898/2025.12.01.25341393)
-   William Powell, Diego R Mazzotti, Stephen D Herrmann et al. · 2025-01-01 · valyu/valyu-medrxiv · DOI 10.64898/2025.12.01.25341393  
-15. [Effects of tirzepatide therapy on body weight and body composition in adults with overweight and obesity](https://pubmed.ncbi.nlm.nih.gov/PMC13388208)
-   Haley Corso, Austin J. Graybeal, Emily Hoelscher et al. · 2026-06-19 · valyu/valyu-pubmed · DOI 10.3389/fendo.2026.1834580  
-16. [Pleiotropic Effects of GLP-1 and Analogs on Cell Signaling, Metabolism, and Function](https://pubmed.ncbi.nlm.nih.gov/PMC6266510)
-   Jordan Rowlands, Julian Heng, Philip Newsholme et al. · 2018-11-23 · valyu/valyu-pubmed · DOI 10.3389/fendo.2018.00672  
-17. [Differences in signalling, trafficking and glucoregulatory properties of glucagon-like peptide-1 receptor agonists exendin-4 and lixisenatide](https://www.biorxiv.org/content/10.1101/803833)
-   Philip Pickford, Maria Lucey, Zijian Fang et al. · 2019-01-01 · valyu/valyu-biorxiv · DOI 10.1101/803833  
-18. [Rational design by structural biology of industrializable, long-acting antihyperglycemic GLP-1 receptor agonists](https://www.biorxiv.org/content/10.1101/2022.04.11.487850)
-   Lei Sun, Zhi-Ming Zheng, Chang-Sheng Shao et al. · 2022-01-01 · valyu/valyu-biorxiv · DOI 10.1101/2022.04.11.487850  
-19. [Physiology and Emerging Biochemistry of the Glucagon-Like Peptide-1 Receptor](https://pubmed.ncbi.nlm.nih.gov/PMC3359799)
+15. [Novel Site-Specific Fatty Chain-Modified GLP-1 Receptor Agonist with Potent Antidiabetic Effects](https://pubmed.ncbi.nlm.nih.gov/PMC6412877)
+   Xia Zhong, Zhu Chen, Qiong Chen et al. · 2019-02-21 · valyu/valyu-pubmed · DOI 10.3390/molecules24040779  
+16. [DNA-based delivery of incretin receptor agonists using MYO Technology leads to durable weight loss in a diet-induced obesity model](https://www.biorxiv.org/content/10.1101/2025.05.30.656889)
+   Linda Sasset, Andrew Cameron, Carleigh Sussman et al. · 2025-01-01 · valyu/valyu-biorxiv · DOI 10.1101/2025.05.30.656889  
+17. [Physiology and Emerging Biochemistry of the Glucagon-Like Peptide-1 Receptor](https://pubmed.ncbi.nlm.nih.gov/PMC3359799)
    Francis S. Willard, Kyle W. Sloop · 2012-05-14 · valyu/valyu-pubmed · DOI 10.1155/2012/470851  
-20. [Trends and Disparities in Newer GLP1 Receptor Agonist Initiation among Real-World Adult Patients Eligible for Obesity Treatment](https://www.medrxiv.org/content/10.1101/2025.01.20.25320839)
-   Rotana M. Radwan, Yao An Lee, Pareeta Kotecha et al. · 2025-01-01 · valyu/valyu-medrxiv · DOI 10.1101/2025.01.20.25320839
+18. [Signaling architecture of the glucagon-like peptide-1 receptor](https://pubmed.ncbi.nlm.nih.gov/PMC12807469)
+   Gregory Austin, Alejandra Tomas · 2026-01-16 · valyu/valyu-pubmed · DOI 10.1172/jci194752  
+19. [Dynamics of GLP-1R peptide agonist engagement are correlated with kinetics of G protein activation](https://www.biorxiv.org/content/10.1101/2021.03.10.434902)
+   Giuseppe Deganutti, Yi-Lynn Liang, Xin Zhang et al. · 2021-01-01 · valyu/valyu-biorxiv · DOI 10.1101/2021.03.10.434902  
+20. [WEGOVY (SEMAGLUTIDE) INJECTION, SOLUTION WEGOVY (SEMAGLUTIDE) TABLET [NOVO NORDISK PHARMACEUTICAL INDUSTRIES, LP]](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=ee06186f-2aa3-4990-a760-757579d8f77b)
+   valyu/valyu-drug-labels  
+   Also available: <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=27f15fac-7d98-4114-a2ec-92494a91da98>  
+   Also available: <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=adec4fd2-6858-4c99-91d4-531f5f2a2d79>  
+   Also available: <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=42bdd912-2393-44c4-b7e0-47672ca28991>  
+   Also available: <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=f5e548d0-cc79-4c34-a3f5-e20a5b8b6564>
